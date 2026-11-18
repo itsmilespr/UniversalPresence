@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Universal Presence — Rich Presence para Discord, sin listas blancas</title>
+<meta name="description" content="Muestra en Discord lo que estás escuchando en Windows: cualquier reproductor, con carátula, barra de progreso e icono. Un solo .exe, sin cuenta ni configuración.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a12">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Universal Presence — Tu música en Discord, desde cualquier reproductor">
+<meta property="og:description" content="Rich Presence para Discord basado en SMTC de Windows. Carátula, progreso e icono del reproductor. Un solo .exe, sin configurar nada.">
+<meta property="og:image" content="https://itsmilespr.github.io/UniversalPresence/assets/icon.png">
+<meta property="og:url" content="https://itsmilespr.github.io/UniversalPresence/">
+<style>
+  :root {
+    --bg: #07070c;
+    --panel: rgba(255, 255, 255, .035);
+    --panel-strong: rgba(255, 255, 255, .06);
+    --line: rgba(255, 255, 255, .09);
+    --line-strong: rgba(255, 255, 255, .16);
+    --text: #f4f4fa;
+    --muted: #a5a5bd;
+    --brand: #7c6cff;
+    --brand-soft: #b3a4ff;
+    --mint: #6ee7b7;
+    --radius: 18px;
+    --max: 1120px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  a { color: inherit; }
+
+  .skip {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: var(--brand);
+    color: #fff;
+    padding: 12px 18px;
+    z-index: 100;
+    border-radius: 0 0 12px 0;
+  }
+  .skip:focus { left: 0; }
+
+  .glow {
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 900px;
+    pointer-events: none;
+    background:
+      radial-gradient(680px 380px at 22% 0%, rgba(124, 108, 255, .28), transparent 70%),
+      radial-gradient(560px 320px at 82% 6%, rgba(79, 140, 255, .18), transparent 72%),
+      radial-gradient(900px 420px at 50% 118%, rgba(124, 108, 255, .12), transparent 70%);
+    z-index: -1;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: .35;
+    background-image: radial-gradient(rgba(255, 255, 255, .14) 1px, transparent 1px);
+    background-size: 26px 26px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 55%);
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, .55), transparent 55%);
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ---------- Header ---------- */
+
+  header.nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    background: rgba(7, 7, 12, .72);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    height: 66px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    font-weight: 650;
+    letter-spacing: -.01em;
+    font-size: 1rem;
+  }
+
+  .brand img {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    box-shadow: 0 4px 16px rgba(124, 108, 255, .45);
+  }
+
+  nav.links {
+    display: flex;
+    gap: 22px;
+    margin-left: auto;
+    font-size: .92rem;
+  }
+
+  nav.links a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .15s ease;
+  }
+
+  nav.links a:hover { color: var(--text); }
+
+  /* ---------- Buttons ---------- */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 13px 20px;
+    border-radius: 12px;
+    font-size: .95rem;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: transform .15s ease, box-shadow .2s ease, background .15s ease, border-color .15s ease;
+    white-space: nowrap;
+  }
+
+  .btn:active { transform: translateY(1px); }
+
+  .btn-primary {
+    color: #fff;
+    background: linear-gradient(135deg, #8b7bff, #6250ff 55%, #4f8cff);
+    box-shadow: 0 10px 26px rgba(96, 82, 255, .38), inset 0 1px 0 rgba(255, 255, 255, .25);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 14px 34px rgba(96, 82, 255, .5), inset 0 1px 0 rgba(255, 255, 255, .3);
+    transform: translateY(-1px);
+  }
+
+  .btn-ghost {
+    color: var(--text);
+    background: rgba(255, 255, 255, .04);
+    border-color: var(--line);
+  }
+
+  .btn-ghost:hover {
+    background: rgba(255, 255, 255, .08);
+    border-color: var(--line-strong);
+  }
+
+  .btn svg { flex: none; }
+
+  /* ---------- Hero ---------- */
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1.04fr .96fr;
+    gap: 64px;
+    align-items: center;
+    padding: 92px 0 84px;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: .78rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--brand-soft);
+    background: rgba(124, 108, 255, .1);
+    border: 1px solid rgba(124, 108, 255, .28);
+    padding: 7px 13px;
+    border-radius: 999px;
+    margin: 0 0 22px;
+    font-weight: 600;
+  }
+
+  .eyebrow .pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--mint);
+    box-shadow: 0 0 0 4px rgba(110, 231, 183, .15);
+  }
+
+  h1 {
+    font-size: clamp(2.45rem, 5.4vw, 4rem);
+    line-height: 1.06;
+    letter-spacing: -.035em;
+    margin: 0 0 22px;
+    font-weight: 700;
+  }
+
+  h1 .grad {
+    background: linear-gradient(100deg, #b8a8ff 0%, #8f7dff 45%, #6ea8ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .lede {
+    font-size: 1.08rem;
+    color: var(--muted);
+    max-width: 540px;
+    margin: 0 0 30px;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .fine {
+    font-size: .84rem;
+    color: #7f7f97;
+    margin: 0;
+  }
+
+  /* ---------- Discord mock ---------- */
+
+  .mock-wrap {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+
+  .mock-wrap::before {
+    content: "";
+    position: absolute;
+    inset: 8% 6% -6% 6%;
+    background: radial-gradient(closest-side, rgba(124, 108, 255, .35), transparent 78%);
+    filter: blur(26px);
+    z-index: -1;
+  }
+
+  .dc {
+    width: 100%;
+    max-width: 404px;
+    border-radius: 16px;
+    background: #1e1f22;
+    border: 1px solid rgba(255, 255, 255, .07);
+    box-shadow: 0 28px 70px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .05) inset;
+    overflow: hidden;
+    font-family: "gg sans", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .dc-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 13px 16px 11px;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: #b5bac1;
+    border-bottom: 1px solid rgba(255, 255, 255, .06);
+  }
+
+  .dc-head .live {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #23a55a;
+    box-shadow: 0 0 0 3px rgba(35, 165, 90, .18);
+  }
+
+  .dc-body {
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+    align-items: flex-start;
+  }
+
+  .dc-cover {
+    position: relative;
+    width: 84px;
+    height: 84px;
+    border-radius: 10px;
+    flex: none;
+    background:
+      radial-gradient(120% 120% at 15% 0%, #9b8cff 0%, #6d5efc 38%, #2b2560 100%);
+    display: grid;
+    place-items: center;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+  }
+
+  .dc-cover span {
+    font-size: 2.1rem;
+    color: rgba(255, 255, 255, .92);
+    text-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+  }
+
+  .dc-badge {
+    position: absolute;
+    right: -7px;
+    bottom: -7px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #111214;
+    border: 2px solid #1e1f22;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+
+  .dc-badge img { width: 20px; height: 20px; border-radius: 50%; }
+
+  .dc-info { min-width: 0; flex: 1; }
+
+  .dc-title {
+    font-weight: 650;
+    font-size: .98rem;
+    color: #f2f3f5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dc-artist {
+    font-size: .84rem;
+    color: #b5bac1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 1px;
+  }
+
+  .pill {
+    font-size: .68rem;
+    font-weight: 700;
+    color: #c7bfff;
+    background: rgba(124, 108, 255, .18);
+    border: 1px solid rgba(124, 108, 255, .35);
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+
+  .dc-album {
+    font-size: .76rem;
+    color: #8f939b;
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .dc-bar {
+    position: relative;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .12);
+    margin-top: 13px;
+    overflow: hidden;
+  }
+
+  .dc-bar::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 46%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #a99bff, #7c6cff);
+  }
+
+  .dc-times {
+    display: flex;
+    justify-content: space-between;
+    font-size: .68rem;
+    color: #7f838b;
+    margin-top: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dc-player {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    font-size: .72rem;
+    color: #9a9fa8;
+  }
+
+  .dc-player img { width: 13px; height: 13px; border-radius: 4px; }
+
+  /* ---------- Sections ---------- */
+
+  section { padding: 74px 0; }
+
+  .section-head { max-width: 660px; margin-bottom: 40px; }
+
+  .kicker {
+    font-size: .76rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--brand-soft);
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+
+  h2 {
+    font-size: clamp(1.7rem, 3.4vw, 2.4rem);
+    line-height: 1.15;
+    letter-spacing: -.025em;
+    margin: 0 0 12px;
+    font-weight: 680;
+  }
+
+  .section-head p {
+    color: var(--muted);
+    margin: 0;
+    font-size: 1rem;
+  }
+
+  /* ---------- Features ---------- */
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+
+  .card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .012));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 20px;
+    transition: border-color .2s ease, transform .2s ease, background .2s ease;
+  }
+
+  .card:hover {
+    border-color: rgba(124, 108, 255, .38);
+    transform: translateY(-2px);
+    background: linear-gradient(180deg, rgba(124, 108, 255, .08), rgba(255, 255, 255, .015));
+  }
+
+  .icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: rgba(124, 108, 255, .14);
+    border: 1px solid rgba(124, 108, 255, .25);
+    color: var(--brand-soft);
+    margin-bottom: 16px;
+  }
+
+  .card h3 {
+    font-size: .98rem;
+    margin: 0 0 6px;
+    font-weight: 640;
+    letter-spacing: -.01em;
+  }
+
+  .card p {
+    margin: 0;
+    font-size: .86rem;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+
+  /* ---------- Steps ---------- */
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+
+  .step {
+    position: relative;
+    padding: 26px 22px 24px;
+  }
+
+  .step .num {
+    font-size: .78rem;
+    font-weight: 700;
+    color: var(--brand-soft);
+    letter-spacing: .08em;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .step .num::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, rgba(124, 108, 255, .4), transparent);
+  }
+
+  .step h3 { font-size: 1.02rem; margin: 0 0 7px; font-weight: 640; }
+
+  .step p { margin: 0; color: var(--muted); font-size: .88rem; }
+
+  code {
+    font-family: "Cascadia Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: .84em;
+    background: rgba(255, 255, 255, .07);
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 6px;
+  }
+
+  .note {
+    margin-top: 22px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    background: rgba(110, 231, 183, .06);
+    border: 1px solid rgba(110, 231, 183, .2);
+    border-radius: 14px;
+    padding: 16px 18px;
+    font-size: .88rem;
+    color: #cfe9dd;
+  }
+
+  .note strong { color: #eafff6; }
+
+  .note svg { flex: none; margin-top: 2px; color: var(--mint); }
+
+  /* ---------- FAQ ---------- */
+
+  .faq {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  details {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 0 18px;
+    transition: border-color .2s ease;
+  }
+
+  details[open] { border-color: rgba(124, 108, 255, .34); }
+
+  summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 16px 0;
+    font-weight: 600;
+    font-size: .92rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+  }
+
+  summary::-webkit-details-marker { display: none; }
+
+  summary::after {
+    content: "+";
+    color: var(--brand-soft);
+    font-size: 1.2rem;
+    font-weight: 400;
+    line-height: 1;
+    transition: transform .2s ease;
+  }
+
+  details[open] summary::after { transform: rotate(45deg); }
+
+  details p {
+    margin: 0 0 16px;
+    color: var(--muted);
+    font-size: .87rem;
+  }
+
+  /* ---------- Download ---------- */
+
+  .download-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    padding: 30px;
+    border-radius: 22px;
+    border: 1px solid rgba(124, 108, 255, .32);
+    background:
+      radial-gradient(500px 240px at 8% 0%, rgba(124, 108, 255, .24), transparent 70%),
+      linear-gradient(180deg, rgba(255, 255, 255, .05), rgba(255, 255, 255, .015));
+    box-shadow: 0 30px 70px rgba(0, 0, 0, .45);
+    overflow: hidden;
+  }
+
+  .download-card img.big {
+    width: 76px;
+    height: 76px;
+    border-radius: 20px;
+    flex: none;
+    box-shadow: 0 12px 30px rgba(124, 108, 255, .45);
+  }
+
+  .download-copy { flex: 1; min-width: 0; }
+
+  .download-copy h2 { font-size: 1.5rem; margin: 0 0 6px; }
+
+  .download-copy p { margin: 0; color: var(--muted); font-size: .9rem; }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 14px;
+  }
+
+  .chip {
+    font-size: .74rem;
+    color: #cfcaf0;
+    background: rgba(255, 255, 255, .05);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-weight: 550;
+  }
+
+  .download-action { flex: none; display: flex; flex-direction: column; gap: 9px; align-items: stretch; }
+
+  .download-action .alt {
+    text-align: center;
+    font-size: .78rem;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .download-action .alt:hover { color: var(--text); }
+
+  /* ---------- Footer ---------- */
+
+  footer {
+    border-top: 1px solid var(--line);
+    margin-top: 40px;
+    padding: 30px 0 40px;
+    color: #7f7f97;
+    font-size: .84rem;
+  }
+
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+
+  .foot .spacer { flex: 1; }
+
+  .foot a { color: #a9a9c2; text-decoration: none; }
+  .foot a:hover { color: var(--text); }
+
+  @media (max-width: 960px) {
+    .hero { grid-template-columns: 1fr; gap: 46px; padding: 64px 0 56px; }
+    .mock-wrap { justify-content: flex-start; }
+    .dc { max-width: 420px; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .steps { grid-template-columns: 1fr; }
+    nav.links { display: none; }
+  }
+
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+    .faq { grid-template-columns: 1fr; }
+    .download-card { flex-direction: column; align-items: flex-start; }
+    .download-action { width: 100%; }
+    .download-action .btn { width: 100%; }
+    section { padding: 54px 0; }
+    .nav-inner { height: 60px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body id="top">
+<a class="skip" href="#main">Saltar al contenido</a>
+<div class="glow" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <img src="assets/icon.png" alt="" width="30" height="30">
+      Universal Presence
+    </a>
+    <nav class="links" aria-label="Secciones">
+      <a href="#caracteristicas">Características</a>
+      <a href="#como-funciona">Cómo funciona</a>
+      <a href="#faq">Preguntas</a>
+      <a href="#descargar">Descargar</a>
+    </nav>
+    <a class="btn btn-ghost" href="https://github.com/itsmilespr/UniversalPresence" style="margin-left:auto;padding:9px 15px;font-size:.86rem">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+  <div class="wrap">
+    <section class="hero" style="padding-bottom:84px">
+      <div>
+        <p class="eyebrow"><span class="pulse"></span> v1.4.1 · Windows 10 y 11</p>
+        <h1>Tu música en Discord.<br><span class="grad">Cualquier reproductor.</span></h1>
+        <p class="lede">
+          Universal Presence lee lo que Windows está reproduciendo —Spotify, foobar2000, VLC,
+          Apple Music, MusicBee, Gatefold…— y lo publica en tu perfil con carátula real,
+          barra de progreso y el icono del reproductor.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="https://github.com/itsmilespr/UniversalPresence/releases/latest">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Descargar para Windows
+          </a>
+          <a class="btn btn-ghost" href="#como-funciona">Cómo funciona</a>
+        </div>
+        <p class="fine">.exe autocontenido · ~163 MB · sin instalador · sin cuenta ni configuración</p>
+      </div>
+
+      <div class="mock-wrap">
+        <div class="dc" role="img" aria-label="Ejemplo de la actividad de Discord: canción Neon Skyline de Aurora Waves, con portada, barra de progreso y contador de repeticiones">
+          <div class="dc-head"><span class="live"></span> Escuchando en Discord</div>
+          <div class="dc-body">
+            <div class="dc-cover">
+              <span aria-hidden="true">♪</span>
+              <div class="dc-badge"><img src="assets/icon.png" alt="" width="20" height="20"></div>
+            </div>
+            <div class="dc-info">
+              <div class="dc-title">Neon Skyline</div>
+              <div class="dc-artist">Aurora Waves <span class="pill">×2</span></div>
+              <div class="dc-album">En Night Drive</div>
+              <div class="dc-bar"></div>
+              <div class="dc-times"><span>1:38</span><span>3:32</span></div>
+              <div class="dc-player"><img src="assets/icon.png" alt="" width="13" height="13">foobar2000</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section id="caracteristicas">
+      <div class="section-head">
+        <p class="kicker">Características</p>
+        <h2>Todo lo que hace, sin pedirte nada</h2>
+        <p>Sin cuentas, sin tokens que pegar y sin lista de reproductores compatibles: si Windows lo expone, se muestra.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>Sin listas blancas</h3>
+          <p>Cualquier app que Windows exponga en SMTC funciona. No hay que esperar a que añadan tu reproductor.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg></div>
+          <h3>Carátula real</h3>
+          <p>Toma la portada del propio reproductor; si no la da, la busca en iTunes y Deezer en paralelo.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+          <h3>Barra sin desfases</h3>
+          <p>Timestamps absolutos y reanclaje al pausar. La barra acompaña al audio, también al saltar canciones.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg></div>
+          <h3>Cambios al instante</h3>
+          <p>Reacciona a los eventos de Windows y publica en un hilo aparte: el límite de Discord no bloquea nada.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></div>
+          <h3>Contador ×N</h3>
+          <p>Detecta cuando repites la misma canción y lo muestra en el estado: ×2, ×3, ×4…</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 9h6v6H9z"/></svg></div>
+          <h3>Icono del reproductor</h3>
+          <p>Se extrae a 256 px del propio .exe y se cachea: se ve nítido y no se repite en cada canción.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+          <h3>Privado por diseño</h3>
+          <p>Todo ocurre en tu PC. Sin cuenta, sin telemetría y sin servidores propios: solo el IPC local de Discord.</p>
+        </article>
+
+        <article class="card">
+          <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 3.5-4h11L21 8"/><path d="M3 8h18"/><path d="M9 12h6"/></svg></div>
+          <h3>Un solo .exe</h3>
+          <p>Autocontenido: no hace falta instalar .NET. Arranca con Windows si quieres, desde la configuración.</p>
+        </article>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section id="como-funciona">
+      <div class="section-head">
+        <p class="kicker">Cómo funciona</p>
+        <h2>Tres pasos y ya está</h2>
+        <p>No hay que crear una aplicación de Discord ni pegar tokens: el identificador va incluido.</p>
+      </div>
+
+      <div class="steps">
+        <article class="card step">
+          <div class="num">01</div>
+          <h3>Descarga y ábrelo</h3>
+          <p>Un único <code>UniversalPresence.exe</code>. Se queda en la bandeja del sistema, sin ventanas molestas.</p>
+        </article>
+        <article class="card step">
+          <div class="num">02</div>
+          <h3>Reproduce música</h3>
+          <p>En cualquier reproductor de Windows. La carátula, el artista y la barra aparecen solos.</p>
+        </article>
+        <article class="card step">
+          <div class="num">03</div>
+          <h3>Mira tu Discord</h3>
+          <p>Con Discord abierto, tu estado muestra la canción al instante. Si lo cierras, se reconecta solo.</p>
+        </article>
+      </div>
+
+      <div class="note">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+        <span><strong>Pensado para no configurar nada.</strong> Al abrirlo detecta el reproductor, resuelve el icono y se conecta a Discord. La configuración es opcional: está en el menú de la bandeja.</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section id="faq">
+      <div class="section-head">
+        <p class="kicker">Preguntas frecuentes</p>
+        <h2>Lo que suele preguntarse</h2>
+      </div>
+
+      <div class="faq">
+        <details>
+          <summary>¿Necesito una cuenta o configurar Discord?</summary>
+          <p>No. La app lleva su propio identificador de aplicación de Discord y se conecta por el canal local (IPC) cuando Discord está abierto. No hay login, ni token, ni que crear una aplicación en el portal de desarrolladores.</p>
+        </details>
+        <details>
+          <summary>¿Qué reproductores funcionan?</summary>
+          <p>Todos los que expongan su sesión en Windows: Spotify, foobar2000 (con Gatefold), VLC, Apple Music, MusicBee, Windows Media Player, TIDAL… Los navegadores vienen excluidos por defecto para que una pestaña de YouTube no aparezca como música, y puedes quitar esa exclusión.</p>
+        </details>
+        <details>
+          <summary>¿Por qué Windows SmartScreen avisa al abrirlo?</summary>
+          <p>Porque el ejecutable no está firmado con un certificado de pago. Es normal en proyectos pequeños: pulsa «Más información» → «Ejecutar de todas formas». El código es abierto y puedes compilarlo tú mismo.</p>
+        </details>
+        <details>
+          <summary>¿Dónde se guarda mi configuración?</summary>
+          <p>En tu equipo, siempre: <code>%APPDATA%\UniversalPresence\config.json</code>. Los registros y las carátulas cacheadas viven en <code>%LOCALAPPDATA%\UniversalPresence</code>. No se envía nada a ningún servidor del proyecto.</p>
+        </details>
+        <details>
+          <summary>¿Cómo lo desinstalo?</summary>
+          <p>Sal del menú de la bandeja, borra el <code>.exe</code> y, si quieres, las dos carpetas de arriba. El inicio con Windows se puede desactivar antes desde Configuración.</p>
+        </details>
+        <details>
+          <summary>¿Funciona en macOS o Linux?</summary>
+          <p>No: usa las API de medios de Windows (SMTC) y el canal IPC de Discord para Windows. Está hecho y probado para Windows 10 y 11 de 64 bits.</p>
+        </details>
+        <details>
+          <summary>¿Puedo compilarlo o modificarlo?</summary>
+          <p>Sí. El proyecto es .NET 8 (WinForms) sin dependencias NuGet y está publicado con licencia MIT. Las instrucciones de compilación y la documentación técnica están en el repositorio.</p>
+        </details>
+        <details>
+          <summary>¿Publica lo que veo en el navegador?</summary>
+          <p>Solo si lo permites: Brave, Chrome, Edge, Firefox, Opera y Vivaldi están en la lista de ignorados por defecto, así que una pestaña de YouTube no se publica.</p>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <div class="wrap">
+    <section id="descargar" style="padding-top:20px">
+      <div class="download-card">
+        <img class="big" src="assets/icon.png" alt="" width="76" height="76">
+        <div class="download-copy">
+          <h2>Universal Presence 1.4.1</h2>
+          <p>Descarga el ejecutable, ábrelo y reproduce. Nada más.</p>
+          <div class="chips">
+            <span class="chip">Windows 10 / 11</span>
+            <span class="chip">x64</span>
+            <span class="chip">~163 MB</span>
+            <span class="chip">Sin instalador</span>
+            <span class="chip">Sin administrador</span>
+            <span class="chip">MIT</span>
+          </div>
+        </div>
+        <div class="download-action">
+          <a class="btn btn-primary" href="https://github.com/itsmilespr/UniversalPresence/releases/latest">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            Descargar .exe
+          </a>
+          <a class="alt" href="https://github.com/itsmilespr/UniversalPresence/releases">Todas las versiones →</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <img src="assets/icon.png" alt="" width="22" height="22" style="border-radius:7px">
+    <span>Universal Presence · Licencia MIT</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/itsmilespr/UniversalPresence">Repositorio</a>
+    <a href="https://github.com/itsmilespr/UniversalPresence/releases">Versiones</a>
+    <a href="https://github.com/itsmilespr/UniversalPresence/issues">Soporte</a>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,636 @@
+using UniversalPresence.Configuration;
+using UniversalPresence.Infrastructure;
+using Windows.Media.Control;
+
+namespace UniversalPresence.Media;
+
+/// <summary>
+/// Universal System Media Transport Controls reader.
+///
+/// It subscribes to the global manager and to every session that Windows exposes and
+/// never looks at an allow-list: if Windows reports a Playing/Paused session, it is used.
+/// </summary>
+public sealed class SmtcMonitor : IDisposable
+{
+    private readonly AppOptions _options;
+    private readonly Log _log;
+    private readonly PlayerIdentityResolver _identity;
+    private readonly ArtworkCache _artwork;
+    private readonly SemaphoreSlim _startGate = new(1, 1);
+    private readonly object _watchGate = new();
+    private readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> _watched =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private GlobalSystemMediaTransportControlsSessionManager? _manager;
+    private int _consecutiveFailures;
+    private bool _disposed;
+
+    public SmtcMonitor(AppOptions options, Log log)
+    {
+        _options = options;
+        _log = log;
+        _identity = new PlayerIdentityResolver(options, log);
+        _artwork = new ArtworkCache(options, log);
+    }
+
+    /// <summary>Raised (from a WinRT thread) whenever Windows reports a session change.</summary>
+    public event Action? Changed;
+
+    public bool IsReady => _manager is not null;
+
+    public string ArtworkDirectory => _artwork.Directory;
+
+    /// <summary>
+    /// Drops the manager and every session subscription so the next read re-creates them.
+    /// Called on the engine loop (never concurrently with a read) after a settings change.
+    /// </summary>
+    public void Reset()
+    {
+        try
+        {
+            if (_manager is not null)
+            {
+                _manager.SessionsChanged -= OnSessionsChanged;
+                _manager.CurrentSessionChanged -= OnCurrentSessionChanged;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        _manager = null;
+        _consecutiveFailures = 0;
+
+        lock (_watchGate)
+        {
+            foreach (var session in _watched.Values)
+            {
+                try
+                {
+                    session.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
+                    session.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
+                    session.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            _watched.Clear();
+        }
+
+        _log.Info("Monitor SMTC reiniciado (configuración actualizada).");
+    }
+
+    public async Task<bool> EnsureStartedAsync(CancellationToken cancellationToken)
+    {
+        if (_manager is not null)
+        {
+            return true;
+        }
+
+        await _startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_manager is not null)
+            {
+                return true;
+            }
+
+            _log.Debug("Solicitando GlobalSystemMediaTransportControlsSessionManager…");
+            var manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            manager.SessionsChanged += OnSessionsChanged;
+            manager.CurrentSessionChanged += OnCurrentSessionChanged;
+            _manager = manager;
+            _log.Info("SMTC listo: detección universal activa (sin lista blanca de reproductores).");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            // El monitor fue disposed; no intentar de nuevo.
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"SMTC no disponible todavía: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            _startGate.Release();
+        }
+    }
+
+    /// <summary>Every session Windows currently exposes, including stopped ones (diagnostics).</summary>
+    public async Task<IReadOnlyList<MediaSnapshot>> ReadAllAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<MediaSnapshot>();
+        var manager = _manager;
+
+        if (manager is null)
+        {
+            return result;
+        }
+
+        IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions;
+
+        try
+        {
+            sessions = manager.GetSessions();
+        }
+        catch (Exception ex)
+        {
+            HandleManagerFailure(ex);
+            return result;
+        }
+
+        _consecutiveFailures = 0;
+
+        var currentAumid = string.Empty;
+        try
+        {
+            currentAumid = manager.GetCurrentSession()?.SourceAppUserModelId ?? string.Empty;
+        }
+        catch
+        {
+            // ignore
+        }
+
+        PruneWatches(sessions);
+
+        foreach (var session in sessions)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var snapshot = await ReadSessionAsync(session, currentAumid, cancellationToken).ConfigureAwait(false);
+                if (snapshot is not null)
+                {
+                    result.Add(snapshot);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"No se pudo leer una sesión SMTC: {ex.Message}");
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Best session to publish: Playing beats Paused beats Stopped; the system's current
+    /// session wins ties, then the most recently updated one. No player is preferred by name.
+    /// </summary>
+    public static MediaSnapshot? SelectBest(IEnumerable<MediaSnapshot> sessions)
+    {
+        return sessions
+            .OrderByDescending(Score)
+            .ThenByDescending(snapshot => snapshot.SourceUpdatedAt)
+            .FirstOrDefault();
+    }
+
+    private static int Score(MediaSnapshot snapshot)
+    {
+        var score = snapshot.Status switch
+        {
+            PlaybackState.Playing => 300,
+            PlaybackState.Paused => 200,
+            PlaybackState.Stopped => 100,
+            _ => 0,
+        };
+
+        if (snapshot.IsCurrentSession)
+        {
+            score += 40;
+        }
+
+        return score;
+    }
+
+    /// <summary>
+    /// Re-reads one session right now, taking the timeline exactly as the player reports it.
+    ///
+    /// Used when a track resumes: the player has just restarted its clock, but
+    /// <c>LastUpdatedTime</c> still points at the pause instant, so projecting the position
+    /// forward would add the whole pause duration and desynchronise the bar. Here the fresh
+    /// timeline is used as-is.
+    /// </summary>
+    public async Task<MediaSnapshot?> ReadFreshAsync(string appUserModelId, CancellationToken cancellationToken)
+    {
+        var manager = _manager;
+
+        if (manager is null || string.IsNullOrWhiteSpace(appUserModelId))
+        {
+            return null;
+        }
+
+        GlobalSystemMediaTransportControlsSession? match;
+        var currentAumid = string.Empty;
+
+        try
+        {
+            currentAumid = manager.GetCurrentSession()?.SourceAppUserModelId ?? string.Empty;
+            match = manager.GetSessions().FirstOrDefault(candidate => string.Equals(
+                (candidate.SourceAppUserModelId ?? string.Empty).Trim(),
+                appUserModelId.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex)
+        {
+            HandleManagerFailure(ex);
+            return null;
+        }
+
+        if (match is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await ReadSessionAsync(match, currentAumid, cancellationToken, projectPosition: false)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo releer la sesión al reanudar: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task<MediaSnapshot?> ReadSessionAsync(
+        GlobalSystemMediaTransportControlsSession session,
+        string currentAumid,
+        CancellationToken cancellationToken,
+        bool projectPosition = true)
+    {
+        var aumid = string.Empty;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                aumid = (session.SourceAppUserModelId ?? string.Empty).Trim();
+
+                var playbackInfo = session.GetPlaybackInfo();
+                var status = MapStatus(playbackInfo?.PlaybackStatus);
+                if (status == PlaybackState.Closed)
+                {
+                    return null;
+                }
+
+                var identity = _identity.Resolve(aumid);
+
+                // Blacklist check happens before any metadata/artwork read: a browser playing
+                // YouTube never reaches the activity builder and behaves as "no music".
+                if (_options.IsIgnoredPlayer(aumid, identity.Name, identity.ExecutablePath, identity.FileName))
+                {
+                    _log.Debug(
+                        $"Sesión ignorada por IgnoredPlayers: AUMID '{aumid}', reproductor '{identity.Name}'.");
+                    return null;
+                }
+
+                var media = await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken).ConfigureAwait(false);
+
+                var title = Clean(media?.Title);
+                var artist = Clean(media?.Artist);
+                var albumArtist = Clean(media?.AlbumArtist);
+                var album = Clean(media?.AlbumTitle);
+                var subtitle = Clean(media?.Subtitle);
+
+                if (title.Length == 0)
+                {
+                    title = subtitle;
+                }
+
+                if (artist.Length == 0)
+                {
+                    artist = albumArtist;
+                }
+
+                if (status != PlaybackState.Playing && title.Length == 0 && artist.Length == 0 && album.Length == 0)
+                {
+                    // Nothing worth showing.
+                    return null;
+                }
+
+                var (position, duration) = ReadTimeline(session, status, projectPosition);
+                var mediaKey = $"{aumid}|{title}|{artist}|{album}";
+                var artwork = await _artwork.GetAsync(media?.Thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
+
+                if (aumid.Length > 0)
+                {
+                    EnsureWatched(session, aumid);
+                }
+
+                return new MediaSnapshot
+                {
+                    AppUserModelId = aumid,
+                    PlayerName = identity.Name,
+                    PlayerExecutable = identity.ExecutablePath,
+                    PlayerNameSource = identity.Source,
+                    Title = title,
+                    Artist = artist,
+                    Album = album,
+                    AlbumArtist = albumArtist,
+                    Position = position,
+                    Duration = duration,
+                    Status = status,
+                    CapturedAt = DateTimeOffset.UtcNow,
+                    SourceUpdatedAt = ReadLastUpdated(session),
+                    IsCurrentSession = aumid.Length > 0 && string.Equals(aumid, currentAumid, StringComparison.OrdinalIgnoreCase),
+                    Artwork = artwork,
+                };
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (attempt == 0)
+            {
+                // SMTC reads race with the player updating its metadata; one retry is
+                // enough in practice and avoids dropping the session from the activity.
+                _log.Debug($"Lectura SMTC falló, reintentando ({ex.GetType().Name}, 0x{ex.HResult:X8}).");
+                await Task.Delay(60, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug(
+                    $"Sesión SMTC '{aumid}' ilegible ({ex.GetType().Name}, 0x{ex.HResult:X8}): '{ex.Message}'");
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private static (TimeSpan Position, TimeSpan Duration) ReadTimeline(
+        GlobalSystemMediaTransportControlsSession session,
+        PlaybackState status,
+        bool projectPosition)
+    {
+        try
+        {
+            var timeline = session.GetTimelineProperties();
+            if (timeline is null)
+            {
+                return (TimeSpan.Zero, TimeSpan.Zero);
+            }
+
+            var duration = timeline.EndTime > timeline.StartTime
+                ? timeline.EndTime - timeline.StartTime
+                : TimeSpan.Zero;
+
+            if (duration < TimeSpan.Zero)
+            {
+                duration = TimeSpan.Zero;
+            }
+
+            var position = timeline.Position;
+
+            if (projectPosition && status == PlaybackState.Playing)
+            {
+                var drift = DateTimeOffset.UtcNow - timeline.LastUpdatedTime.ToUniversalTime();
+                if (drift > TimeSpan.Zero && drift < TimeSpan.FromMinutes(10))
+                {
+                    // Players rarely update Position every second; project it forward.
+                    position += drift;
+                }
+            }
+
+            if (position < TimeSpan.Zero)
+            {
+                position = TimeSpan.Zero;
+            }
+
+            if (duration > TimeSpan.Zero && position > duration)
+            {
+                position = duration;
+            }
+
+            return (position, duration);
+        }
+        catch
+        {
+            return (TimeSpan.Zero, TimeSpan.Zero);
+        }
+    }
+
+    private static DateTimeOffset ReadLastUpdated(GlobalSystemMediaTransportControlsSession session)
+    {
+        try
+        {
+            return session.GetTimelineProperties().LastUpdatedTime;
+        }
+        catch
+        {
+            return DateTimeOffset.MinValue;
+        }
+    }
+
+    private static PlaybackState MapStatus(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status) => status switch
+    {
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing => PlaybackState.Playing,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused => PlaybackState.Paused,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped => PlaybackState.Stopped,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Opened => PlaybackState.Stopped,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing => PlaybackState.Stopped,
+        _ => PlaybackState.Closed,
+    };
+
+    private static string Clean(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "";
+        }
+
+        var cleaned = value.Replace('\0', ' ').Trim();
+
+        // Some integrations double-encode whitespace.
+        while (cleaned.Contains("  ", StringComparison.Ordinal))
+        {
+            cleaned = cleaned.Replace("  ", " ", StringComparison.Ordinal);
+        }
+
+        return cleaned;
+    }
+
+    private void EnsureWatched(GlobalSystemMediaTransportControlsSession session, string aumid)
+    {
+        lock (_watchGate)
+        {
+            if (_watched.ContainsKey(aumid))
+            {
+                return;
+            }
+
+            try
+            {
+                session.MediaPropertiesChanged += OnSessionMediaPropertiesChanged;
+                session.PlaybackInfoChanged += OnSessionPlaybackInfoChanged;
+                session.TimelinePropertiesChanged += OnSessionTimelinePropertiesChanged;
+                _watched[aumid] = session;
+                _log.Debug($"Suscrito a los eventos de la sesión '{aumid}'.");
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"No se pudieron suscribir los eventos de '{aumid}': {ex.Message}");
+            }
+        }
+    }
+
+    private void PruneWatches(IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions)
+    {
+        var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var session in sessions)
+        {
+            try
+            {
+                var aumid = session.SourceAppUserModelId;
+                if (!string.IsNullOrWhiteSpace(aumid))
+                {
+                    live.Add(aumid);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+        }
+
+        lock (_watchGate)
+        {
+            foreach (var pair in _watched.Where(pair => !live.Contains(pair.Key)).ToList())
+            {
+                try
+                {
+                    pair.Value.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
+                    pair.Value.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
+                    pair.Value.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                _watched.Remove(pair.Key);
+            }
+        }
+    }
+
+    private void HandleManagerFailure(Exception exception)
+    {
+        _consecutiveFailures++;
+        _log.Warn($"GetSessions() falló ({_consecutiveFailures}): {exception.Message}");
+
+        if (_consecutiveFailures < 3)
+        {
+            return;
+        }
+
+        // The manager can go stale after a user session change or a resume from sleep.
+        _log.Warn("Reiniciando el gestor SMTC.");
+        _consecutiveFailures = 0;
+
+        try
+        {
+            if (_manager is not null)
+            {
+                _manager.SessionsChanged -= OnSessionsChanged;
+                _manager.CurrentSessionChanged -= OnCurrentSessionChanged;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        _manager = null;
+
+        lock (_watchGate)
+        {
+            _watched.Clear();
+        }
+    }
+
+    private void OnManagerChanged() => Changed?.Invoke();
+
+    private void OnSessionsChanged(
+        GlobalSystemMediaTransportControlsSessionManager sender,
+        SessionsChangedEventArgs args) => OnManagerChanged();
+
+    private void OnCurrentSessionChanged(
+        GlobalSystemMediaTransportControlsSessionManager sender,
+        CurrentSessionChangedEventArgs args) => OnManagerChanged();
+
+    private void OnSessionMediaPropertiesChanged(
+        GlobalSystemMediaTransportControlsSession sender,
+        MediaPropertiesChangedEventArgs args) => OnManagerChanged();
+
+    private void OnSessionPlaybackInfoChanged(
+        GlobalSystemMediaTransportControlsSession sender,
+        PlaybackInfoChangedEventArgs args) => OnManagerChanged();
+
+    private void OnSessionTimelinePropertiesChanged(
+        GlobalSystemMediaTransportControlsSession sender,
+        TimelinePropertiesChangedEventArgs args) => OnManagerChanged();
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        try
+        {
+            if (_manager is not null)
+            {
+                _manager.SessionsChanged -= OnSessionsChanged;
+                _manager.CurrentSessionChanged -= OnCurrentSessionChanged;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        lock (_watchGate)
+        {
+            foreach (var session in _watched.Values)
+            {
+                try
+                {
+                    session.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
+                    session.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
+                    session.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            _watched.Clear();
+        }
+
+        _manager = null;
+        _startGate.Dispose();
+    }
+}

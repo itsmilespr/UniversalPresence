@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publicar ejecutable autocontenido
+        run: >
+          dotnet publish UniversalPresence.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:DebugType=None -p:DebugSymbols=false -o dist
+
+      - name: Crear la release con el .exe
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release create $tag dist/UniversalPresence.exe `
+            --title "Universal Presence $tag" `
+            --generate-notes

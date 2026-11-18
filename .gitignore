@@ -1,0 +1,15 @@
+bin/
+obj/
+.dotnet/
+.tools/
+publish/
+publish_test/
+.vs/
+*.user
+*.suo
+*.pdb
+.devin/
+.freebuff/
+.cloud-attachments/
+*.log
+.env
