@@ -19,6 +19,7 @@ public sealed class LastFmService
     }
 
     public bool IsEnabled => !string.IsNullOrWhiteSpace(_options.LastFmApiKey)
+        && !string.IsNullOrWhiteSpace(_options.LastFmSecret)
         && !string.IsNullOrWhiteSpace(_options.LastFmUser)
         && !string.IsNullOrWhiteSpace(_options.LastFmSessionKey);
 
@@ -28,7 +29,7 @@ public sealed class LastFmService
         try
         {
             var apiSig = Md5($"album{album}api_key{_options.LastFmApiKey}artist{artist}methodtrack.scrobble" +
-                             $"sk{_options.LastFmSessionKey}timestamp{startedAt.ToUnixTimeSeconds()}track{title}");
+                             $"sk{_options.LastFmSessionKey}timestamp{startedAt.ToUnixTimeSeconds()}track{title}{_options.LastFmSecret}");
             var body = $"method=track.scrobble&track={Uri.EscapeDataString(title)}&artist={Uri.EscapeDataString(artist)}" +
                        $"&album={Uri.EscapeDataString(album)}&timestamp={startedAt.ToUnixTimeSeconds()}" +
                        $"&api_key={_options.LastFmApiKey}&sk={_options.LastFmSessionKey}&api_sig={apiSig}";

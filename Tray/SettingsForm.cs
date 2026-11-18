@@ -49,6 +49,7 @@ public sealed class SettingsForm : Form
 
     // --- Last.fm tab ------------------------------------------------------------
     private TextBox _lastFmApiKeyBox = null!;
+    private TextBox _lastFmSecretBox = null!;
     private TextBox _lastFmUserBox = null!;
     private TextBox _lastFmSessionKeyBox = null!;
 
@@ -414,6 +415,7 @@ public sealed class SettingsForm : Form
     private Control BuildLastFmTab()
     {
         _lastFmApiKeyBox = new TextBox { Text = _options.LastFmApiKey, Dock = DockStyle.Top, Name = "LastFmApiKeyBox", PlaceholderText = "API key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+        _lastFmSecretBox = new TextBox { Text = _options.LastFmSecret, Dock = DockStyle.Top, Name = "LastFmSecretBox", PlaceholderText = "Shared secret", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _lastFmUserBox = new TextBox { Text = _options.LastFmUser, Dock = DockStyle.Top, Name = "LastFmUserBox", PlaceholderText = "Usuario", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _lastFmSessionKeyBox = new TextBox { Text = _options.LastFmSessionKey, Dock = DockStyle.Top, Name = "LastFmSessionKeyBox", PlaceholderText = "Session key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
 
@@ -428,6 +430,8 @@ public sealed class SettingsForm : Form
         };
         layout.Controls.Add(new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
         layout.Controls.Add(_lastFmApiKeyBox);
+        layout.Controls.Add(new Label { Text = "Shared secret:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        layout.Controls.Add(_lastFmSecretBox);
         layout.Controls.Add(new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
         layout.Controls.Add(_lastFmUserBox);
         layout.Controls.Add(new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
@@ -672,6 +676,7 @@ public sealed class SettingsForm : Form
         _options.StateTemplate = _stateTemplateBox.Text.Trim();
         _options.LargeTextTemplate = _largeTextTemplateBox.Text.Trim();
         _options.LastFmApiKey = _lastFmApiKeyBox.Text.Trim();
+        _options.LastFmSecret = _lastFmSecretBox.Text.Trim();
         _options.LastFmUser = _lastFmUserBox.Text.Trim();
         _options.LastFmSessionKey = _lastFmSessionKeyBox.Text.Trim();
         _options.Normalize();

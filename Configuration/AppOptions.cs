@@ -190,6 +190,9 @@ public sealed class AppOptions
     /// <summary>API key de Last.fm para scrobbling (vacío = desactivado).</summary>
     public string LastFmApiKey { get; set; } = "";
 
+    /// <summary>Secreto compartido de Last.fm (necesario para firmar las peticiones).</summary>
+    public string LastFmSecret { get; set; } = "";
+
     /// <summary>Usuario de Last.fm para scrobbling (vacío = desactivado).</summary>
     public string LastFmUser { get; set; } = "";
 
