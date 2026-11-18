@@ -47,7 +47,7 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 700);
+        ClientSize = new Size(560, 720);
         MinimumSize = new Size(520, 520);
         AutoScroll = true;
         Padding = new Padding(14);
@@ -61,7 +61,7 @@ public sealed class SettingsForm : Form
             Name = "SettingsRoot",
         };
 
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -136,21 +136,22 @@ public sealed class SettingsForm : Form
         addRow.Controls.Add(addButton, 2, 0);
         addRow.Controls.Add(removeButton, 3, 0);
 
-        var playersLayout = new Panel
+        _ignoredList.Dock = DockStyle.Fill;
+        _ignoredList.IntegralHeight = false;
+        _ignoredList.MinimumSize = new Size(0, 0);
+        addRow.Dock = DockStyle.Fill;
+        addRow.Margin = new Padding(0, 8, 0, 0);
+
+        var playersLayout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Padding = new Padding(0),
-            Name = "PlayersLayout",
+            ColumnCount = 1,
+            RowCount = 2,
         };
-        _ignoredList.Dock = DockStyle.Top;
-        _ignoredList.Height = 120;
-        addRow.Dock = DockStyle.Top;
-        addRow.Margin = new Padding(0, 8, 0, 0);
-        playersLayout.Controls.Add(_ignoredList);
-        playersLayout.Controls.Add(addRow);
-
+        playersLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        playersLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        playersLayout.Controls.Add(_ignoredList, 0, 0);
+        playersLayout.Controls.Add(addRow, 0, 1);
         playersGroup.Controls.Add(playersLayout);
 
         _newPlayer.KeyDown += (_, eventArgs) =>
