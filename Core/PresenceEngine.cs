@@ -21,7 +21,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// seguidas solo se manda la última: las intermedias no gastan huecos del límite de
     /// Discord (5 actualizaciones cada 20 s) ni llegan a verse.
     /// </summary>
-    private static readonly TimeSpan PublishSettleWindow = TimeSpan.FromMilliseconds(140);
+    private static readonly TimeSpan PublishSettleWindow = TimeSpan.FromMilliseconds(60);
 
     /// <summary>Tiempo máximo para confirmar que una canción volvió de verdad al principio.</summary>
     private static readonly TimeSpan RepeatConfirmationWindow = TimeSpan.FromSeconds(5);
@@ -1035,7 +1035,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             _metadataGapSince = DateTimeOffset.UtcNow;
         }
 
-        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromSeconds(2);
+        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromSeconds(1);
     }
 
     /// <summary>

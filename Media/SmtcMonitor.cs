@@ -25,10 +25,12 @@ public sealed class SmtcMonitor : IDisposable
     /// </summary>
     // Los eventos son la vía normal; estos TTL son solo la red de seguridad para
     // reproductores que no los emiten. Cuanto más largos, menos objetos WinRT se crean.
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(6);
+    // TTLs más cortos: la latencia al cambiar de canción importa más que ahorrar
+    // unos MB de objetos WinRT (el GC ya los limpia periódicamente).
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(2);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
