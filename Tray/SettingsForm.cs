@@ -49,6 +49,7 @@ public sealed class SettingsForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(560, 760);
         MinimumSize = new Size(520, 640);
+        AutoScroll = true;
         Padding = new Padding(14);
         Icon = TrayIcons.Get(TrayVisualState.Playing);
 
