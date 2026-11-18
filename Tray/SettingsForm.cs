@@ -28,6 +28,7 @@ public sealed class SettingsForm : Form
     private CheckBox _startWithWindows = null!;
     private CheckBox _showProgress = null!;
     private NumericUpDown _pauseRefresh = null!;
+    private CheckBox _darkMode = null!;
 
     // --- Paused tab -------------------------------------------------------------
     private CheckBox _showPausedMedia = null!;
@@ -160,6 +161,7 @@ public sealed class SettingsForm : Form
         CancelButton = cancelButton;
 
         RefreshIgnoredList();
+        ApplyTheme();
     }
 
     private static TabPage MakeTab(string title, Control content)
@@ -293,6 +295,8 @@ public sealed class SettingsForm : Form
         _hideIfNoArtwork = MakeCheck(_ui.HideIfNoArtwork, _options.HideIfNoArtwork, "HideIfNoArtworkCheck");
         _startWithWindows = MakeCheck(_ui.StartWithWindows, _options.StartWithWindows, "StartWithWindowsCheck");
         _showProgress = MakeCheck(_ui.ShowProgress, _options.ShowProgress, "ShowProgressCheck");
+        _darkMode = MakeCheck("Modo oscuro (dark mode)", _options.DarkMode, "DarkModeCheck");
+        _darkMode.CheckedChanged += (_, _) => ApplyTheme();
 
         var pauseLabel = new Label
         {
@@ -327,6 +331,7 @@ public sealed class SettingsForm : Form
         layout.Controls.Add(_hideIfNoArtwork);
         layout.Controls.Add(_startWithWindows);
         layout.Controls.Add(_showProgress);
+        layout.Controls.Add(_darkMode);
         layout.Controls.Add(pauseRow);
         group.Controls.Add(layout);
 
@@ -539,6 +544,107 @@ public sealed class SettingsForm : Form
         if (!string.IsNullOrEmpty(select)) _ignoredList.SelectedItem = select;
     }
 
+    private void ApplyTheme()
+    {
+        bool dark = _darkMode != null && _darkMode.Checked;
+        Color pageBg = dark ? Color.FromArgb(32, 33, 36) : PageBg;
+        Color cardBg = dark ? Color.FromArgb(41, 42, 45) : Color.White;
+        Color fg = dark ? Color.FromArgb(232, 234, 237) : Color.Black;
+        Color accent = dark ? Color.FromArgb(138, 180, 248) : Accent;
+
+        BackColor = pageBg;
+        ForeColor = fg;
+
+        foreach (Control c in Controls)
+        {
+            ApplyThemeTo(c, pageBg, cardBg, fg, accent, dark);
+        }
+    }
+
+    private static void ApplyThemeTo(Control c, Color pageBg, Color cardBg, Color fg, Color accent, bool dark)
+    {
+        if (c is TabControl tc)
+        {
+            tc.BackColor = pageBg;
+            tc.ForeColor = fg;
+        }
+        else if (c is TabPage tp)
+        {
+            tp.BackColor = pageBg;
+            tp.ForeColor = fg;
+        }
+        else if (c is GroupBox gb)
+        {
+            gb.BackColor = cardBg;
+            gb.ForeColor = fg;
+        }
+        else if (c is Panel p)
+        {
+            p.BackColor = cardBg;
+            p.ForeColor = fg;
+        }
+        else if (c is FlowLayoutPanel flp)
+        {
+            flp.BackColor = cardBg;
+            flp.ForeColor = fg;
+        }
+        else if (c is TableLayoutPanel tlp)
+        {
+            tlp.BackColor = cardBg;
+            tlp.ForeColor = fg;
+        }
+        else if (c is TextBox tb)
+        {
+            tb.BackColor = dark ? Color.FromArgb(55, 57, 61) : Color.White;
+            tb.ForeColor = fg;
+            tb.BorderStyle = BorderStyle.FixedSingle;
+        }
+        else if (c is ListBox lb)
+        {
+            lb.BackColor = dark ? Color.FromArgb(55, 57, 61) : Color.White;
+            lb.ForeColor = fg;
+        }
+        else if (c is NumericUpDown nud)
+        {
+            nud.BackColor = dark ? Color.FromArgb(55, 57, 61) : Color.White;
+            nud.ForeColor = fg;
+        }
+        else if (c is CheckBox cb)
+        {
+            cb.ForeColor = fg;
+            cb.BackColor = Color.Transparent;
+        }
+        else if (c is Label lbl)
+        {
+            lbl.ForeColor = fg;
+            lbl.BackColor = Color.Transparent;
+        }
+        else if (c is Button btn)
+        {
+            if (btn.Name == "SaveButton")
+            {
+                btn.BackColor = accent;
+                btn.ForeColor = dark ? Color.FromArgb(32, 33, 36) : Color.White;
+            }
+            else
+            {
+                btn.BackColor = dark ? Color.FromArgb(55, 57, 61) : SystemColors.Control;
+                btn.ForeColor = fg;
+                btn.FlatStyle = FlatStyle.Flat;
+            }
+        }
+        else
+        {
+            c.BackColor = pageBg;
+            c.ForeColor = fg;
+        }
+
+        foreach (Control child in c.Controls)
+        {
+            ApplyThemeTo(child, pageBg, cardBg, fg, accent, dark);
+        }
+    }
+
     private bool SaveSettings()
     {
         var pending = _newPlayer.Text.Trim();
@@ -550,6 +656,7 @@ public sealed class SettingsForm : Form
         _options.HideIfNoArtwork = _hideIfNoArtwork.Checked;
         _options.StartWithWindows = _startWithWindows.Checked;
         _options.ShowProgress = _showProgress.Checked;
+        _options.DarkMode = _darkMode.Checked;
         _options.PauseRefreshSeconds = (int)_pauseRefresh.Value;
         _options.ShowPausedMedia = _showPausedMedia.Checked;
         _options.PauseResetProgress = _pauseResetProgress.Checked;

@@ -202,6 +202,9 @@ public sealed class AppOptions
     /// <summary>Atajos de teclado globales activos.</summary>
     public bool GlobalHotkeys { get; set; } = true;
 
+    /// <summary>Tema oscuro para la ventana de configuración y el overlay.</summary>
+    public bool DarkMode { get; set; }
+
     /// <summary>Rollback automático si la app no arranca correctamente.</summary>
     public bool AutoRollback { get; set; } = true;
 

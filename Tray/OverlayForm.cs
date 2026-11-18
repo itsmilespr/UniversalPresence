@@ -10,16 +10,18 @@ public sealed class OverlayForm : Form
     private readonly Label _title = new() { Dock = DockStyle.Top, Font = new Font("Segoe UI", 10f, FontStyle.Bold), ForeColor = Color.White, AutoSize = false, Height = 22 };
     private readonly Label _artist = new() { Dock = DockStyle.Top, Font = new Font("Segoe UI", 9f), ForeColor = Color.LightGray, AutoSize = false, Height = 18 };
     private readonly PresenceEngine _engine;
+    private readonly AppOptions _options;
 
-    public OverlayForm(PresenceEngine engine)
+    public OverlayForm(PresenceEngine engine, AppOptions options)
     {
         _engine = engine;
+        _options = options;
         FormBorderStyle = FormBorderStyle.None;
         TopMost = true;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(320, 52);
-        BackColor = Color.FromArgb(30, 30, 30);
+        BackColor = options.DarkMode ? Color.FromArgb(30, 30, 30) : Color.FromArgb(30, 30, 30);
         Opacity = 0.85;
         var screen = Screen.PrimaryScreen!;
         Location = new Point(screen.WorkingArea.Right - Width - 12, screen.WorkingArea.Bottom - Height - 12);

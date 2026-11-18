@@ -170,7 +170,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         if (_options.ShowOverlay)
         {
-            try { _overlay = new OverlayForm(_engine); _overlay.Show(); }
+            try { _overlay = new OverlayForm(_engine, _options); _overlay.Show(); }
             catch (Exception ex) { _log.Warn($"Could not open the overlay: {ex.Message}"); }
         }
 
@@ -333,7 +333,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 if (_overlay == null || _overlay.IsDisposed)
                 {
-                    _overlay = new OverlayForm(_engine);
+                    _overlay = new OverlayForm(_engine, _options);
                     _overlay.Show();
                 }
             }
