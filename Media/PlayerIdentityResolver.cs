@@ -246,7 +246,7 @@ public sealed class PlayerIdentityResolver
     /// </summary>
     private static System.Drawing.Bitmap? LoadBestIcon(string path)
     {
-        var handle = ExtractIconAtSize(path, 256);
+        var handle = ExtractIconAtSize(path, 128);
         if (handle != IntPtr.Zero)
         {
             try
@@ -293,7 +293,7 @@ public sealed class PlayerIdentityResolver
     /// <summary>Deja el icono en al menos 256×256 con interpolación de calidad.</summary>
     private static System.Drawing.Bitmap NormalizeIcon(System.Drawing.Bitmap original)
     {
-        const int minDimension = 256;
+        const int minDimension = 128;
 
         if (original.Width >= minDimension && original.Height >= minDimension)
         {
