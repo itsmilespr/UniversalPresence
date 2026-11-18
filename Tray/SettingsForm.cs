@@ -41,14 +41,14 @@ public sealed class SettingsForm : Form
         Text = _ui.SettingsTitle;
         Font = new Font("Segoe UI", 9.75f, FontStyle.Regular, GraphicsUnit.Point);
         BackColor = Color.FromArgb(248, 249, 252);
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false;
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 760);
-        MinimumSize = new Size(520, 640);
+        ClientSize = new Size(560, 700);
+        MinimumSize = new Size(520, 520);
         AutoScroll = true;
         Padding = new Padding(14);
         Icon = TrayIcons.Get(TrayVisualState.Playing);
@@ -112,19 +112,29 @@ public sealed class SettingsForm : Form
         };
         removeButton.Click += (_, _) => RemoveSelectedPlayer();
 
+        var addLabel = new Label
+        {
+            Text = _ui.AddPlayerLabel + ":",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 6, 8, 0),
+        };
+
         var addRow = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
+            ColumnCount = 4,
             AutoSize = true,
             Margin = new Padding(0, 8, 0, 0),
         };
+        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         addRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        addRow.Controls.Add(_newPlayer, 0, 0);
-        addRow.Controls.Add(addButton, 1, 0);
-        addRow.Controls.Add(removeButton, 2, 0);
+        addRow.Controls.Add(addLabel, 0, 0);
+        addRow.Controls.Add(_newPlayer, 1, 0);
+        addRow.Controls.Add(addButton, 2, 0);
+        addRow.Controls.Add(removeButton, 3, 0);
 
         var playersLayout = new TableLayoutPanel
         {
@@ -132,7 +142,7 @@ public sealed class SettingsForm : Form
             ColumnCount = 1,
             RowCount = 2,
         };
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 200f));
+        playersLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120f));
         playersLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         playersLayout.Controls.Add(_ignoredList, 0, 0);
         playersLayout.Controls.Add(addRow, 0, 1);
