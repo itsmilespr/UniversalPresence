@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Universal Presence — Rich Presence para Discord, sin listas blancas</title>
-<meta name="description" content="Muestra en Discord lo que estás escuchando en Windows: cualquier reproductor, con carátula, barra de progreso e icono. Un solo .exe, sin cuenta ni configuración.">
+<title>Universal Presence — Rich Presence for Discord, no whitelists</title>
+<meta name="description" content="Show on Discord what you are listening to on Windows: any player, with cover art, progress bar and icon. A single .exe, no account or setup.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a12">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Universal Presence — Tu música en Discord, desde cualquier reproductor">
-<meta property="og:description" content="Rich Presence para Discord basado en SMTC de Windows. Carátula, progreso e icono del reproductor. Un solo .exe, sin configurar nada.">
+<meta property="og:title" content="Universal Presence — Your music on Discord, from any player">
+<meta property="og:description" content="Rich Presence for Discord based on Windows SMTC. Cover art, progress and player icon. A single .exe, nothing to configure.">
 <meta property="og:image" content="https://itsmilespr.github.io/UniversalPresence/assets/icon.png">
 <meta property="og:url" content="https://itsmilespr.github.io/UniversalPresence/">
 <style>
@@ -714,7 +714,7 @@
 </style>
 </head>
 <body id="top">
-<a class="skip" href="#main">Saltar al contenido</a>
+<a class="skip" href="#main">Skip to content</a>
 <div class="glow" aria-hidden="true"></div>
 <div class="grain" aria-hidden="true"></div>
 
@@ -724,11 +724,11 @@
       <img src="assets/icon.png" alt="" width="30" height="30">
       Universal Presence
     </a>
-    <nav class="links" aria-label="Secciones">
-      <a href="#caracteristicas">Características</a>
-      <a href="#como-funciona">Cómo funciona</a>
-      <a href="#faq">Preguntas</a>
-      <a href="#descargar">Descargar</a>
+    <nav class="links" aria-label="Sections">
+      <a href="#caracteristicas">Features</a>
+      <a href="#como-funciona">How it works</a>
+      <a href="#faq">FAQ</a>
+      <a href="#descargar">Download</a>
     </nav>
     <a class="btn btn-ghost" href="https://github.com/itsmilespr/UniversalPresence" style="margin-left:auto;padding:9px 15px;font-size:.86rem">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
@@ -742,26 +742,26 @@
   <div class="wrap">
     <section class="hero" style="padding-bottom:84px">
       <div>
-        <p class="eyebrow"><span class="pulse"></span> v1.4.5 · Windows 10 y 11</p>
-        <h1>Tu música en Discord.<br><span class="grad">Cualquier reproductor.</span></h1>
+        <p class="eyebrow"><span class="pulse"></span> v1.4.5 · Windows 10 and 11</p>
+        <h1>Your music on Discord.<br><span class="grad">Any player.</span></h1>
         <p class="lede">
-          Universal Presence lee lo que Windows está reproduciendo —Spotify, foobar2000, VLC,
-          Apple Music, MusicBee, Gatefold…— y lo publica en tu perfil con carátula real,
-          barra de progreso y el icono del reproductor.
+          Universal Presence reads what Windows is playing —Spotify, foobar2000, VLC,
+          Apple Music, MusicBee, Gatefold…— and publishes it to your profile with real cover art,
+          a progress bar and the player icon.
         </p>
         <div class="actions">
           <a class="btn btn-primary" href="https://github.com/itsmilespr/UniversalPresence/releases/latest">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-            Descargar para Windows
+            Download for Windows
           </a>
-          <a class="btn btn-ghost" href="#como-funciona">Cómo funciona</a>
+          <a class="btn btn-ghost" href="#como-funciona">How it works</a>
         </div>
-        <p class="fine">.exe autocontenido · ~163 MB · sin instalador · sin cuenta ni configuración</p>
+        <p class="fine">Self-contained .exe · ~163 MB · no installer · no account or setup</p>
       </div>
 
       <div class="mock-wrap">
-        <div class="dc" role="img" aria-label="Ejemplo de la actividad de Discord: canción Neon Skyline de Aurora Waves, con portada, barra de progreso y contador de repeticiones">
-          <div class="dc-head"><span class="live"></span> Escuchando en Discord</div>
+        <div class="dc" role="img" aria-label="Example of the Discord activity: song Neon Skyline by Aurora Waves, with cover art, progress bar and repeat counter">
+          <div class="dc-head"><span class="live"></span> Listening on Discord</div>
           <div class="dc-body">
             <div class="dc-cover">
               <span aria-hidden="true">♪</span>
@@ -770,7 +770,7 @@
             <div class="dc-info">
               <div class="dc-title">Neon Skyline</div>
               <div class="dc-artist">Aurora Waves <span class="pill">×2</span></div>
-              <div class="dc-album">En Night Drive</div>
+              <div class="dc-album">From Night Drive</div>
               <div class="dc-bar"></div>
               <div class="dc-times"><span>1:38</span><span>3:32</span></div>
               <div class="dc-player"><img src="assets/icon.png" alt="" width="13" height="13">foobar2000</div>
@@ -784,58 +784,58 @@
   <div class="wrap">
     <section id="caracteristicas">
       <div class="section-head">
-        <p class="kicker">Características</p>
-        <h2>Todo lo que hace, sin pedirte nada</h2>
-        <p>Sin cuentas, sin tokens que pegar y sin lista de reproductores compatibles: si Windows lo expone, se muestra.</p>
+        <p class="kicker">Features</p>
+        <h2>Everything it does, asking nothing of you</h2>
+        <p>No accounts, no tokens to paste and no list of supported players: if Windows exposes it, it shows.</p>
       </div>
 
       <div class="grid">
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
-          <h3>Sin listas blancas</h3>
-          <p>Cualquier app que Windows exponga en SMTC funciona. No hay que esperar a que añadan tu reproductor.</p>
+          <h3>No whitelists</h3>
+          <p>Any app Windows exposes via SMTC works. You do not have to wait for your player to be added.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="m21 15-5-5L5 21"/></svg></div>
-          <h3>Carátula real</h3>
-          <p>Toma la portada del propio reproductor; si no la da, la busca en iTunes y Deezer en paralelo.</p>
+          <h3>Real cover art</h3>
+          <p>Takes the cover from the player itself; if it does not provide one, it looks it up on iTunes and Deezer in parallel.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-          <h3>Barra sin desfases</h3>
-          <p>Timestamps absolutos y reanclaje al pausar. La barra acompaña al audio, también al saltar canciones.</p>
+          <h3>Drift-free bar</h3>
+          <p>Absolute timestamps and re-anchoring on pause. The bar tracks the audio, even when skipping tracks.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg></div>
-          <h3>Cambios al instante</h3>
-          <p>Reacciona a los eventos de Windows y publica en un hilo aparte: el límite de Discord no bloquea nada.</p>
+          <h3>Instant updates</h3>
+          <p>Reacts to Windows events and publishes on a separate thread: Discord's rate limit blocks nothing.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></div>
-          <h3>Contador ×N</h3>
-          <p>Detecta cuando repites la misma canción y lo muestra en el estado: ×2, ×3, ×4…</p>
+          <h3>×N counter</h3>
+          <p>Detects when you repeat the same track and shows it in the status: ×2, ×3, ×4…</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 9h6v6H9z"/></svg></div>
-          <h3>Icono del reproductor</h3>
-          <p>Se extrae a 256 px del propio .exe y se cachea: se ve nítido y no se repite en cada canción.</p>
+          <h3>Player icon</h3>
+          <p>Extracted at 256 px from the player's own .exe and cached: sharp and not repeated on every track.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-          <h3>Privado por diseño</h3>
-          <p>Todo ocurre en tu PC. Sin cuenta, sin telemetría y sin servidores propios: solo el IPC local de Discord.</p>
+          <h3>Private by design</h3>
+          <p>Everything happens on your PC. No account, no telemetry and no own servers: only Discord's local IPC.</p>
         </article>
 
         <article class="card">
           <div class="icon"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="m3 8 3.5-4h11L21 8"/><path d="M3 8h18"/><path d="M9 12h6"/></svg></div>
-          <h3>Un solo .exe</h3>
-          <p>Autocontenido: no hace falta instalar .NET. Arranca con Windows si quieres, desde la configuración.</p>
+          <h3>A single .exe</h3>
+          <p>Self-contained: no need to install .NET. Starts with Windows if you want, from the settings.</p>
         </article>
       </div>
     </section>
@@ -844,32 +844,32 @@
   <div class="wrap">
     <section id="como-funciona">
       <div class="section-head">
-        <p class="kicker">Cómo funciona</p>
-        <h2>Tres pasos y ya está</h2>
-        <p>No hay que crear una aplicación de Discord ni pegar tokens: el identificador va incluido.</p>
+        <p class="kicker">How it works</p>
+        <h2>Three steps and you are done</h2>
+        <p>No need to create a Discord application or paste tokens: the id is included.</p>
       </div>
 
       <div class="steps">
         <article class="card step">
           <div class="num">01</div>
-          <h3>Descarga y ábrelo</h3>
-          <p>Un único <code>UniversalPresence.exe</code>. Se queda en la bandeja del sistema, sin ventanas molestas.</p>
+          <h3>Download and open it</h3>
+          <p>A single <code>UniversalPresence.exe</code>. It stays in the system tray, no annoying windows.</p>
         </article>
         <article class="card step">
           <div class="num">02</div>
-          <h3>Reproduce música</h3>
-          <p>En cualquier reproductor de Windows. La carátula, el artista y la barra aparecen solos.</p>
+          <h3>Play music</h3>
+          <p>In any Windows player. The cover, the artist and the bar appear on their own.</p>
         </article>
         <article class="card step">
           <div class="num">03</div>
-          <h3>Mira tu Discord</h3>
-          <p>Con Discord abierto, tu estado muestra la canción al instante. Si lo cierras, se reconecta solo.</p>
+          <h3>Check your Discord</h3>
+          <p>With Discord open, your status shows the track instantly. If you close it, it reconnects on its own.</p>
         </article>
       </div>
 
       <div class="note">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-        <span><strong>Pensado para no configurar nada.</strong> Al abrirlo detecta el reproductor, resuelve el icono y se conecta a Discord. La configuración es opcional: está en el menú de la bandeja.</span>
+        <span><strong>Built to need no setup.</strong> On launch it detects the player, resolves the icon and connects to Discord. Settings are optional: they live in the tray menu.</span>
       </div>
     </section>
   </div>
@@ -877,42 +877,42 @@
   <div class="wrap">
     <section id="faq">
       <div class="section-head">
-        <p class="kicker">Preguntas frecuentes</p>
-        <h2>Lo que suele preguntarse</h2>
+        <p class="kicker">FAQ</p>
+        <h2>Common questions</h2>
       </div>
 
       <div class="faq">
         <details>
-          <summary>¿Necesito una cuenta o configurar Discord?</summary>
-          <p>No. La app lleva su propio identificador de aplicación de Discord y se conecta por el canal local (IPC) cuando Discord está abierto. No hay login, ni token, ni que crear una aplicación en el portal de desarrolladores.</p>
+          <summary>Do I need an account or to configure Discord?</summary>
+          <p>No. The app ships its own Discord application id and connects over the local channel (IPC) when Discord is open. No login, no token and no need to create an application in the developer portal.</p>
         </details>
         <details>
-          <summary>¿Qué reproductores funcionan?</summary>
-          <p>Todos los que expongan su sesión en Windows: Spotify, foobar2000 (con Gatefold), VLC, Apple Music, MusicBee, Windows Media Player, TIDAL… Los navegadores vienen excluidos por defecto para que una pestaña de YouTube no aparezca como música, y puedes quitar esa exclusión.</p>
+          <summary>Which players work?</summary>
+          <p>All those that expose their session on Windows: Spotify, foobar2000 (with Gatefold), VLC, Apple Music, MusicBee, Windows Media Player, TIDAL… Browsers are excluded by default so a YouTube tab does not show up as music, and you can remove that exclusion.</p>
         </details>
         <details>
-          <summary>¿Por qué Windows SmartScreen avisa al abrirlo?</summary>
-          <p>Porque el ejecutable no está firmado con un certificado de pago. Es normal en proyectos pequeños: pulsa «Más información» → «Ejecutar de todas formas». El código es abierto y puedes compilarlo tú mismo.</p>
+          <summary>Why does Windows SmartScreen warn on open?</summary>
+          <p>Because the executable is not signed with a paid certificate. Normal for small projects: click “More info” → “Run anyway”. The code is open and you can build it yourself.</p>
         </details>
         <details>
-          <summary>¿Dónde se guarda mi configuración?</summary>
-          <p>En tu equipo, siempre: <code>%APPDATA%\UniversalPresence\config.json</code>. Los registros y las carátulas cacheadas viven en <code>%LOCALAPPDATA%\UniversalPresence</code>. No se envía nada a ningún servidor del proyecto.</p>
+          <summary>Where is my configuration stored?</summary>
+          <p>Always on your machine: <code>%APPDATA%\UniversalPresence\config.json</code>. Logs and cached covers live in <code>%LOCALAPPDATA%\UniversalPresence</code>. Nothing is sent to any project server.</p>
         </details>
         <details>
-          <summary>¿Cómo lo desinstalo?</summary>
-          <p>Sal del menú de la bandeja, borra el <code>.exe</code> y, si quieres, las dos carpetas de arriba. El inicio con Windows se puede desactivar antes desde Configuración.</p>
+          <summary>How do I uninstall it?</summary>
+          <p>Exit from the tray menu, delete the <code>.exe</code> and, if you want, the two folders above. Starting with Windows can be disabled beforehand from Settings.</p>
         </details>
         <details>
-          <summary>¿Funciona en macOS o Linux?</summary>
-          <p>No: usa las API de medios de Windows (SMTC) y el canal IPC de Discord para Windows. Está hecho y probado para Windows 10 y 11 de 64 bits.</p>
+          <summary>Does it work on macOS or Linux?</summary>
+          <p>No: it uses Windows media APIs (SMTC) and Discord's IPC channel for Windows. Built and tested for 64-bit Windows 10 and 11.</p>
         </details>
         <details>
-          <summary>¿Puedo compilarlo o modificarlo?</summary>
-          <p>Sí. El proyecto es .NET 8 (WinForms) sin dependencias NuGet y está publicado con licencia MIT. Las instrucciones de compilación y la documentación técnica están en el repositorio.</p>
+          <summary>Can I build or modify it?</summary>
+          <p>Yes. The project is .NET 8 (WinForms) with no NuGet dependencies and is published under the MIT license. Build instructions and technical docs are in the repository.</p>
         </details>
         <details>
-          <summary>¿Publica lo que veo en el navegador?</summary>
-          <p>Solo si lo permites: Brave, Chrome, Edge, Firefox, Opera y Vivaldi están en la lista de ignorados por defecto, así que una pestaña de YouTube no se publica.</p>
+          <summary>Does it publish what I see in the browser?</summary>
+          <p>Only if you allow it: Brave, Chrome, Edge, Firefox, Opera and Vivaldi are ignored by default, so a YouTube tab is not published.</p>
         </details>
       </div>
     </section>
@@ -924,22 +924,22 @@
         <img class="big" src="assets/icon.png" alt="" width="76" height="76">
         <div class="download-copy">
           <h2>Universal Presence 1.4.5</h2>
-          <p>Descarga el ejecutable, ábrelo y reproduce. Nada más.</p>
+          <p>Download the executable, open it and play. Nothing else.</p>
           <div class="chips">
             <span class="chip">Windows 10 / 11</span>
             <span class="chip">x64</span>
             <span class="chip">~163 MB</span>
-            <span class="chip">Sin instalador</span>
-            <span class="chip">Sin administrador</span>
+            <span class="chip">No installer</span>
+            <span class="chip">No admin rights</span>
             <span class="chip">MIT</span>
           </div>
         </div>
         <div class="download-action">
           <a class="btn btn-primary" href="https://github.com/itsmilespr/UniversalPresence/releases/latest">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-            Descargar .exe
+            Download .exe
           </a>
-          <a class="alt" href="https://github.com/itsmilespr/UniversalPresence/releases">Todas las versiones →</a>
+          <a class="alt" href="https://github.com/itsmilespr/UniversalPresence/releases">All versions →</a>
         </div>
       </div>
     </section>
@@ -950,11 +950,11 @@
 <footer>
   <div class="wrap foot">
     <img src="assets/icon.png" alt="" width="22" height="22" style="border-radius:7px">
-    <span>Universal Presence · Licencia MIT</span>
+    <span>Universal Presence · MIT License</span>
     <span class="spacer"></span>
-    <a href="https://github.com/itsmilespr/UniversalPresence">Repositorio</a>
-    <a href="https://github.com/itsmilespr/UniversalPresence/releases">Versiones</a>
-    <a href="https://github.com/itsmilespr/UniversalPresence/issues">Soporte</a>
+    <a href="https://github.com/itsmilespr/UniversalPresence">Repository</a>
+    <a href="https://github.com/itsmilespr/UniversalPresence/releases">Releases</a>
+    <a href="https://github.com/itsmilespr/UniversalPresence/issues">Support</a>
   </div>
 </footer>
 

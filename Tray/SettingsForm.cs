@@ -1,5 +1,6 @@
 using System.Drawing;
 using UniversalPresence.Configuration;
+using UniversalPresence.Localization;
 
 namespace UniversalPresence.Tray;
 
@@ -13,6 +14,7 @@ public sealed class SettingsForm : Form
     private readonly AppOptions _options;
     private readonly Action _onSaved;
     private readonly List<string> _ignored;
+    private readonly UiText _ui;
     private readonly ListBox _ignoredList;
     private readonly TextBox _newPlayer;
     private readonly CheckBox _appendPlayer;
@@ -34,8 +36,9 @@ public sealed class SettingsForm : Form
         _options = options;
         _onSaved = onSaved;
         _ignored = options.IgnoredPlayers.ToList();
+        _ui = UiText.For(options.Language);
 
-        Text = "Universal Presence — Configuración";
+        Text = _ui.SettingsTitle;
         Font = new Font("Segoe UI", 9.75f, FontStyle.Regular, GraphicsUnit.Point);
         BackColor = Color.FromArgb(248, 249, 252);
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -44,7 +47,8 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 640);
+        ClientSize = new Size(560, 760);
+        MinimumSize = new Size(520, 640);
         Padding = new Padding(14);
         Icon = TrayIcons.Get(TrayVisualState.Playing);
 
@@ -65,7 +69,7 @@ public sealed class SettingsForm : Form
         // --- Ignored players ---------------------------------------------------------
         var playersGroup = new GroupBox
         {
-            Text = "Reproductores ignorados (lista negra)",
+            Text = _ui.IgnoredPlayersGroup,
             Dock = DockStyle.Fill,
             Padding = new Padding(10),
             Margin = new Padding(0),
@@ -78,19 +82,20 @@ public sealed class SettingsForm : Form
             IntegralHeight = false,
             SelectionMode = SelectionMode.One,
             Name = "IgnoredList",
+            MinimumSize = new Size(0, 200),
         };
 
         _newPlayer = new TextBox
         {
             Dock = DockStyle.Fill,
-            PlaceholderText = "p. ej. vlc",
+            PlaceholderText = _ui.NewPlayerPlaceholder,
             Margin = new Padding(0),
             Name = "NewPlayerBox",
         };
 
         var addButton = new Button
         {
-            Text = "Añadir",
+            Text = _ui.Add,
             AutoSize = true,
             Name = "AddButton",
             Margin = new Padding(6, 0, 0, 0),
@@ -99,7 +104,7 @@ public sealed class SettingsForm : Form
 
         var removeButton = new Button
         {
-            Text = "Eliminar",
+            Text = _ui.Remove,
             AutoSize = true,
             Name = "RemoveButton",
             Margin = new Padding(6, 0, 0, 0),
@@ -148,7 +153,7 @@ public sealed class SettingsForm : Form
         // --- Behavior ----------------------------------------------------------------
         var behaviorGroup = new GroupBox
         {
-            Text = "Apariencia y barra de progreso",
+            Text = _ui.BehaviorGroup,
             Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowOnly,
@@ -159,7 +164,7 @@ public sealed class SettingsForm : Form
 
         _appendPlayer = new CheckBox
         {
-            Text = "Mostrar el reproductor en la segunda línea (Artista · Reproductor)",
+            Text = _ui.AppendPlayer,
             AutoSize = true,
             Checked = _options.AppendPlayerToState,
             Name = "AppendPlayerCheck",
@@ -168,7 +173,7 @@ public sealed class SettingsForm : Form
 
         _usePlayerNameAsActivity = new CheckBox
         {
-            Text = "Mostrar el nombre del reproductor arriba en Discord (Reproduciendo foobar2000)",
+            Text = _ui.UsePlayerNameAsActivity,
             AutoSize = true,
             Checked = _options.UsePlayerNameAsActivityName,
             Name = "UsePlayerNameAsActivityCheck",
@@ -177,7 +182,7 @@ public sealed class SettingsForm : Form
 
         _hideIfNoArtwork = new CheckBox
         {
-            Text = "No publicar si la canción no tiene portada",
+            Text = _ui.HideIfNoArtwork,
             AutoSize = true,
             Checked = _options.HideIfNoArtwork,
             Name = "HideIfNoArtworkCheck",
@@ -186,7 +191,7 @@ public sealed class SettingsForm : Form
 
         _startWithWindows = new CheckBox
         {
-            Text = "Iniciar con Windows",
+            Text = _ui.StartWithWindows,
             AutoSize = true,
             Checked = _options.StartWithWindows,
             Name = "StartWithWindowsCheck",
@@ -195,7 +200,7 @@ public sealed class SettingsForm : Form
 
         _showProgress = new CheckBox
         {
-            Text = "Mostrar barra de progreso (timestamps)",
+            Text = _ui.ShowProgress,
             AutoSize = true,
             Checked = _options.ShowProgress,
             Name = "ShowProgressCheck",
@@ -204,7 +209,7 @@ public sealed class SettingsForm : Form
 
         var pauseLabel = new Label
         {
-            Text = "Reanclar la barra en pausa cada (segundos, 0 = desactivado):",
+            Text = _ui.PauseRefreshLabel,
             AutoSize = true,
             Margin = new Padding(0, 8, 10, 0),
         };
@@ -250,7 +255,7 @@ public sealed class SettingsForm : Form
         // --- Paused media -------------------------------------------------------------
         var pausedGroup = new GroupBox
         {
-            Text = "Comportamiento al pausar",
+            Text = _ui.PausedGroup,
             Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowOnly,
@@ -261,7 +266,7 @@ public sealed class SettingsForm : Form
 
         _showPausedMedia = new CheckBox
         {
-            Text = "Mantener la canción visible al pausar",
+            Text = _ui.ShowPausedMedia,
             AutoSize = true,
             Checked = _options.ShowPausedMedia,
             Name = "ShowPausedMediaCheck",
@@ -270,7 +275,7 @@ public sealed class SettingsForm : Form
 
         _pauseResetProgress = new CheckBox
         {
-            Text = "Reiniciar la barra de progreso a 0:00 mientras está pausada",
+            Text = _ui.PauseResetProgress,
             AutoSize = true,
             Checked = _options.PauseResetProgress,
             Name = "PauseResetProgressCheck",
@@ -279,7 +284,7 @@ public sealed class SettingsForm : Form
 
         _showPausedIcon = new CheckBox
         {
-            Text = "Mostrar icono de pausa sobre la portada al pausar",
+            Text = _ui.ShowPausedIcon,
             AutoSize = true,
             Checked = _options.ShowPausedIcon,
             Name = "ShowPausedIconCheck",
@@ -287,12 +292,12 @@ public sealed class SettingsForm : Form
         };
 
         _pauseAssetKey = CreateAssetKeyBox(
-            "Clave del asset de pausa (portal de Discord):",
+            _ui.PauseAssetKeyLabel,
             _options.PauseAssetKey,
             "PauseAssetKeyBox");
 
         _appIconAssetKey = CreateAssetKeyBox(
-            "Clave del icono de UniversalPresence (portal de Discord):",
+            _ui.AppIconAssetKeyLabel,
             _options.AppIconAssetKey,
             "AppIconAssetKeyBox");
 
@@ -313,7 +318,7 @@ public sealed class SettingsForm : Form
 
         var hint = new Label
         {
-            Text = "Los cambios se guardan en config.json y se aplican al instante, sin cerrar la aplicación.",
+            Text = _ui.Hint,
             Dock = DockStyle.Fill,
             Height = 34,
             ForeColor = SystemColors.GrayText,
@@ -332,7 +337,7 @@ public sealed class SettingsForm : Form
 
         var saveButton = new Button
         {
-            Text = "Guardar",
+            Text = _ui.Save,
             AutoSize = true,
             MinimumSize = new Size(96, 30),
             Name = "SaveButton",
@@ -340,7 +345,7 @@ public sealed class SettingsForm : Form
 
         var cancelButton = new Button
         {
-            Text = "Cancelar",
+            Text = _ui.Cancel,
             AutoSize = true,
             MinimumSize = new Size(96, 30),
             Margin = new Padding(0, 0, 8, 0),
@@ -457,8 +462,8 @@ public sealed class SettingsForm : Form
         {
             MessageBox.Show(
                 this,
-                $"«{value}» ya está en la lista.",
-                "Universal Presence",
+                string.Format(_ui.AlreadyInList, value),
+                _ui.AppName,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
             return;
@@ -546,8 +551,8 @@ public sealed class SettingsForm : Form
         {
             MessageBox.Show(
                 this,
-                "No se pudo guardar la configuración:\n" + ex.Message,
-                "Universal Presence",
+                string.Format(_ui.SaveFailed, ex.Message),
+                _ui.AppName,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             return false;

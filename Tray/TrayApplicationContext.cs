@@ -4,6 +4,7 @@ using UniversalPresence.Configuration;
 using UniversalPresence.Core;
 using UniversalPresence.Discord;
 using UniversalPresence.Infrastructure;
+using UniversalPresence.Localization;
 
 namespace UniversalPresence.Tray;
 
@@ -14,6 +15,7 @@ namespace UniversalPresence.Tray;
 public sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly AppOptions _options;
+    private readonly UiText _ui;
     private readonly Log _log;
     private readonly PresenceEngine _engine;
     private readonly NotifyIcon _notifyIcon;
@@ -33,6 +35,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext(AppOptions options, Log log, bool openSettings = false)
     {
         _options = options;
+        _ui = UiText.For(options.Language);
         _log = log;
 
         _dispatcher = new Control();
@@ -41,18 +44,18 @@ public sealed class TrayApplicationContext : ApplicationContext
         _engine = new PresenceEngine(options, log);
         _updater = new UpdateService(log);
 
-        _statusItem = new ToolStripMenuItem("Iniciando…") { Enabled = false };
+        _statusItem = new ToolStripMenuItem(_ui.Starting) { Enabled = false };
 
-        _pauseItem = new ToolStripMenuItem("Pausar");
+        _pauseItem = new ToolStripMenuItem(_ui.Pause);
         _pauseItem.Click += (_, _) => TogglePause();
 
-        var settingsItem = new ToolStripMenuItem("Configuración…");
+        var settingsItem = new ToolStripMenuItem(_ui.Settings);
         settingsItem.Click += (_, _) => OpenSettings();
 
-        var logsItem = new ToolStripMenuItem("Abrir carpeta de registros");
+        var logsItem = new ToolStripMenuItem(_ui.OpenLogs);
         logsItem.Click += (_, _) => OpenPath(_log.Directory);
 
-        _updateItem = new ToolStripMenuItem("Buscar actualizaciones");
+        _updateItem = new ToolStripMenuItem(_ui.CheckUpdates);
         _updateItem.Click += (_, _) =>
         {
             if (_updater.HasDownloadedUpdate)
@@ -64,18 +67,18 @@ public sealed class TrayApplicationContext : ApplicationContext
             _ = CheckForUpdatesAsync(manual: true);
         };
 
-        _autoUpdateItem = new ToolStripMenuItem("Buscar actualizaciones automáticamente")
+        _autoUpdateItem = new ToolStripMenuItem(_ui.AutoUpdate)
         {
             Checked = _options.AutoUpdate,
             CheckOnClick = true,
         };
         _autoUpdateItem.CheckedChanged += (_, _) => SetAutoUpdate(_autoUpdateItem.Checked);
 
-        var exitItem = new ToolStripMenuItem("Salir");
+        var exitItem = new ToolStripMenuItem(_ui.Exit);
         exitItem.Click += (_, _) => BeginExit();
 
         _menu = new ContextMenuStrip();
-        _menu.Items.Add(new ToolStripMenuItem("Universal Presence")
+        _menu.Items.Add(new ToolStripMenuItem(_ui.AppName)
         {
             Enabled = false,
             Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
@@ -94,7 +97,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon = new NotifyIcon
         {
             Icon = TrayIcons.Get(TrayVisualState.Idle),
-            Text = "Universal Presence",
+            Text = _ui.AppName,
             Visible = true,
             ContextMenuStrip = _menu,
         };
@@ -110,8 +113,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _notifyIcon.ShowBalloonTip(
                 6_000,
-                "Universal Presence",
-                "Aún no hay DiscordClientId. Ábreme desde el icono → «Configuración…» y añade el id de tu aplicación de Discord.",
+                _ui.AppName,
+                _ui.NoDiscordClientId,
                 ToolTipIcon.Info);
         }
 
@@ -154,8 +157,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             _log.Error("No se pudo abrir la configuración.", ex);
             MessageBox.Show(
-                "No se pudo abrir la configuración:\n" + ex.Message,
-                "Universal Presence",
+                string.Format(_ui.OpenSettingsFailed, ex.Message),
+                _ui.AppName,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
@@ -190,7 +193,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
 
         var paused = _engine.Paused;
-        _pauseItem.Text = paused ? "Reanudar" : "Pausar";
+        _pauseItem.Text = paused ? _ui.Resume : _ui.Pause;
 
         var status = _engine.StatusText;
         _statusItem.Text = Shorten(status, 90);
@@ -249,7 +252,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         if (manual)
         {
-            _updateItem.Text = "Buscando actualizaciones…";
+            _updateItem.Text = _ui.CheckingUpdates;
             _updateItem.Enabled = false;
         }
 
@@ -268,20 +271,20 @@ public sealed class TrayApplicationContext : ApplicationContext
                 {
                     _notifyIcon.ShowBalloonTip(
                         6_000,
-                        "Universal Presence",
-                        $"Ya tienes la última versión ({_updater.CurrentVersion}).",
+                        _ui.AppName,
+                        string.Format(_ui.UpToDate, _updater.CurrentVersion),
                         ToolTipIcon.Info);
                 }
 
                 return;
             }
 
-            _updateItem.Text = $"Descargando {info.Tag}…";
+            _updateItem.Text = string.Format(_ui.Downloading, info.Tag);
             _updateItem.Enabled = false;
             _notifyIcon.ShowBalloonTip(
                 7_000,
-                "Universal Presence",
-                $"{info.Tag} disponible. Descargando en segundo plano…",
+                _ui.AppName,
+                string.Format(_ui.UpdateAvailable, info.Tag),
                 ToolTipIcon.Info);
 
             var path = await _updater.DownloadAsync(info);
@@ -295,8 +298,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 _notifyIcon.ShowBalloonTip(
                     7_000,
-                    "Universal Presence",
-                    "No se pudo descargar la actualización; se reintentará más tarde.",
+                    _ui.AppName,
+                    _ui.DownloadFailed,
                     ToolTipIcon.Warning);
                 return;
             }
@@ -305,8 +308,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _updateItem.Enabled = true;
             _notifyIcon.ShowBalloonTip(
                 8_000,
-                "Universal Presence",
-                $"{info.Tag} lista. Se instalará al salir; usa el menú para reiniciar ahora.",
+                _ui.AppName,
+                string.Format(_ui.UpdateReady, info.Tag),
                 ToolTipIcon.Info);
         }
         catch (OperationCanceledException)
@@ -321,8 +324,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             {
                 _notifyIcon.ShowBalloonTip(
                     7_000,
-                    "Universal Presence",
-                    "No se pudo comprobar si hay actualizaciones.",
+                    _ui.AppName,
+                    _ui.UpdateCheckFailed,
                     ToolTipIcon.Warning);
             }
         }
@@ -332,7 +335,7 @@ public sealed class TrayApplicationContext : ApplicationContext
 
             if (!_closing && !_updater.HasDownloadedUpdate)
             {
-                _updateItem.Text = "Buscar actualizaciones";
+                _updateItem.Text = _ui.CheckUpdates;
                 _updateItem.Enabled = true;
             }
         }
