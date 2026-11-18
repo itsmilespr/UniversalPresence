@@ -20,7 +20,12 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly ContextMenuStrip _menu;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _pauseItem;
+    private readonly ToolStripMenuItem _updateItem;
+    private readonly ToolStripMenuItem _autoUpdateItem;
+    private readonly UpdateService _updater;
+    private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly Control _dispatcher;
+    private bool _updateBusy;
     private TrayVisualState _visualState = TrayVisualState.Idle;
     private bool _closing;
     private bool _settingsOpen;
@@ -34,6 +39,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _ = _dispatcher.Handle; // created on the WinForms thread, used to marshal
 
         _engine = new PresenceEngine(options, log);
+        _updater = new UpdateService(log);
 
         _statusItem = new ToolStripMenuItem("Iniciando…") { Enabled = false };
 
@@ -45,6 +51,25 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         var logsItem = new ToolStripMenuItem("Abrir carpeta de registros");
         logsItem.Click += (_, _) => OpenPath(_log.Directory);
+
+        _updateItem = new ToolStripMenuItem("Buscar actualizaciones");
+        _updateItem.Click += (_, _) =>
+        {
+            if (_updater.HasDownloadedUpdate)
+            {
+                BeginExit();
+                return;
+            }
+
+            _ = CheckForUpdatesAsync(manual: true);
+        };
+
+        _autoUpdateItem = new ToolStripMenuItem("Buscar actualizaciones automáticamente")
+        {
+            Checked = _options.AutoUpdate,
+            CheckOnClick = true,
+        };
+        _autoUpdateItem.CheckedChanged += (_, _) => SetAutoUpdate(_autoUpdateItem.Checked);
 
         var exitItem = new ToolStripMenuItem("Salir");
         exitItem.Click += (_, _) => BeginExit();
@@ -60,6 +85,9 @@ public sealed class TrayApplicationContext : ApplicationContext
         _menu.Items.Add(_pauseItem);
         _menu.Items.Add(settingsItem);
         _menu.Items.Add(logsItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(_updateItem);
+        _menu.Items.Add(_autoUpdateItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(exitItem);
 
@@ -89,6 +117,16 @@ public sealed class TrayApplicationContext : ApplicationContext
 
 
         UpdateUi();
+
+        // Primera comprobación 20 s después de arrancar (deja respirar a Discord/SMTC) y
+        // luego cada 6 h. Sin `AutoUpdate` el tick no hace nada.
+        _updateTimer = new System.Windows.Forms.Timer { Interval = 20_000 };
+        _updateTimer.Tick += async (_, _) =>
+        {
+            _updateTimer.Interval = 6 * 60 * 60 * 1000;
+            await CheckForUpdatesAsync(manual: false);
+        };
+        _updateTimer.Start();
 
         if (openSettings)
         {
@@ -177,6 +215,129 @@ public sealed class TrayApplicationContext : ApplicationContext
         UpdateUi();
     }
 
+    private void SetAutoUpdate(bool enabled)
+    {
+        _options.AutoUpdate = enabled;
+
+        try
+        {
+            _options.Save();
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"No se pudo guardar la preferencia de actualizaciones: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Comprueba GitHub Releases y, si hay una versión nueva, la descarga en segundo plano.
+    /// Se instala al cerrar (o al pulsar «Actualizar» en el menú).
+    /// </summary>
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (_closing || _updateBusy)
+        {
+            return;
+        }
+
+        if (!manual && !_options.AutoUpdate)
+        {
+            return;
+        }
+
+        _updateBusy = true;
+
+        if (manual)
+        {
+            _updateItem.Text = "Buscando actualizaciones…";
+            _updateItem.Enabled = false;
+        }
+
+        try
+        {
+            var info = await _updater.CheckAsync();
+
+            if (_closing)
+            {
+                return;
+            }
+
+            if (info is null)
+            {
+                if (manual)
+                {
+                    _notifyIcon.ShowBalloonTip(
+                        6_000,
+                        "Universal Presence",
+                        $"Ya tienes la última versión ({_updater.CurrentVersion}).",
+                        ToolTipIcon.Info);
+                }
+
+                return;
+            }
+
+            _updateItem.Text = $"Descargando {info.Tag}…";
+            _updateItem.Enabled = false;
+            _notifyIcon.ShowBalloonTip(
+                7_000,
+                "Universal Presence",
+                $"{info.Tag} disponible. Descargando en segundo plano…",
+                ToolTipIcon.Info);
+
+            var path = await _updater.DownloadAsync(info);
+
+            if (_closing)
+            {
+                return;
+            }
+
+            if (path is null)
+            {
+                _notifyIcon.ShowBalloonTip(
+                    7_000,
+                    "Universal Presence",
+                    "No se pudo descargar la actualización; se reintentará más tarde.",
+                    ToolTipIcon.Warning);
+                return;
+            }
+
+            _updateItem.Text = $"Actualizar a {info.Tag} y reiniciar";
+            _updateItem.Enabled = true;
+            _notifyIcon.ShowBalloonTip(
+                8_000,
+                "Universal Presence",
+                $"{info.Tag} lista. Se instalará al salir; usa el menú para reiniciar ahora.",
+                ToolTipIcon.Info);
+        }
+        catch (OperationCanceledException)
+        {
+            // cerrando
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"No se pudo comprobar la actualización: {ex.Message}");
+
+            if (manual)
+            {
+                _notifyIcon.ShowBalloonTip(
+                    7_000,
+                    "Universal Presence",
+                    "No se pudo comprobar si hay actualizaciones.",
+                    ToolTipIcon.Warning);
+            }
+        }
+        finally
+        {
+            _updateBusy = false;
+
+            if (!_closing && !_updater.HasDownloadedUpdate)
+            {
+                _updateItem.Text = "Buscar actualizaciones";
+                _updateItem.Enabled = true;
+            }
+        }
+    }
+
     private void BeginExit()
     {
         if (_closing)
@@ -242,8 +403,21 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         if (disposing)
         {
+            _closing = true;
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
+
             _engine.Updated -= OnEngineUpdated;
             _engine.Dispose();
+
+            // Cualquier cierre ordenado instala la actualización descargada: el script
+            // espera a que este proceso desaparezca antes de reemplazar el .exe.
+            if (_updater.HasDownloadedUpdate)
+            {
+                _updater.TryApplyAndRestart();
+            }
+
+            _updater.Dispose();
             _notifyIcon.Dispose();
             _menu.Dispose();
             _dispatcher.Dispose();

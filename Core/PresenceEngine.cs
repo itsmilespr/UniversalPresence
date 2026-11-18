@@ -285,6 +285,12 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         snapshot = snapshot with { PlayCount = _playCount <= 0 ? 1 : _playCount };
                     }
 
+                    if (!string.IsNullOrWhiteSpace(snapshot?.PublicArtworkUrl)
+                        && !string.Equals(snapshot.PublicArtworkUrl, _lastSnapshot?.PublicArtworkUrl, StringComparison.Ordinal))
+                    {
+                        _log.Debug($"Portada publicada: {snapshot.PublicArtworkUrl}");
+                    }
+
                     _lastSnapshot = snapshot;
 
                     if (jumped && _desiredKey is not null && _desiredKey != IdleKey)
@@ -394,11 +400,9 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return null;
         }
 
-        // Same track: reuse the URL that was already resolved (pause / resume / re-read).
-        if (previous?.PublicArtworkUrl is { Length: > 0 } carriedUrl && SameMediaTrack(previous, snapshot))
-        {
-            snapshot = snapshot with { PublicArtworkUrl = carriedUrl };
-        }
+        // Same track: la URL anterior es solo un respaldo (pausa / relectura). Si la
+        // caché ya tiene una URL nueva por una renovación, esa manda.
+        var carriedUrl = SameMediaTrack(previous, snapshot) ? previous?.PublicArtworkUrl : null;
 
         var artwork = _options.Artwork;
 
@@ -409,11 +413,6 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
         if (artwork.UsesUpload && snapshot.Artwork is not null)
         {
-            if (!string.IsNullOrWhiteSpace(snapshot.PublicArtworkUrl))
-            {
-                return snapshot;
-            }
-
             var cachedCover = _artworkUpload.GetCachedCover(snapshot.Artwork);
 
             if (cachedCover is not null)
@@ -443,6 +442,13 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 StartCoverUpload(snapshot.Artwork);
             }
 
+            // Sin URL nueva (subida en curso o fallo reciente): se conserva la anterior de
+            // la misma pista mientras siga siendo válida.
+            if (!string.IsNullOrWhiteSpace(carriedUrl))
+            {
+                return snapshot with { PublicArtworkUrl = carriedUrl };
+            }
+
             // Si la subida aún no está disponible, intentar también la búsqueda en
             // catálogo en paralelo: así las pistas que no están en el host público siguen
             // mostrando una portada (iTunes/Deezer) en lugar de quedarse sin imagen.
@@ -454,6 +460,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             {
                 return snapshot;
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(carriedUrl))
+        {
+            snapshot = snapshot with { PublicArtworkUrl = carriedUrl };
         }
 
         if (!artwork.UsesLookup)

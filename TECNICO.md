@@ -19,6 +19,7 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | `Media/ArtworkLookupService.cs` | Busca una portada pública en **iTunes Search** y **Deezer** en paralelo, con caché de 6 h. |
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
 | `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
+| `Infrastructure/UpdateService.cs` | Consulta GitHub Releases, descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso. |
 | `Discord/DiscordIpcClient.cs` | Named pipe `discord-ipc-0..9`, handshake `{v:1, client_id}`, frames de 8 bytes (op + longitud), `PING`→`PONG`, `SET_ACTIVITY`. |
 | `Discord/DiscordPresenceService.cs` | Conexión perezosa, reconexión con backoff (1 s → 30 s), ventana de 5 actualizaciones / 20 s y limpieza de la actividad al salir. |
 | `Core/PresenceEngine.cs` | Bucle de lectura y publicación, publicador independiente, contador de repeticiones y estado para la bandeja. |

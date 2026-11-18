@@ -138,6 +138,12 @@ public sealed class AppOptions
     /// </summary>
     public bool StartWithWindows { get; set; } = true;
 
+    /// <summary>
+    /// Busca actualizaciones en GitHub Releases al arrancar y cada 6 h, y las instala al
+    /// cerrar. Se puede desactivar desde el menú del icono de bandeja.
+    /// </summary>
+    public bool AutoUpdate { get; set; } = true;
+
     /// <summary>Playing | Listening | Watching | Competing.</summary>
     public string ActivityType { get; set; } = "Listening";
 

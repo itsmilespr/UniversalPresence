@@ -39,6 +39,9 @@ lista: si Windows expone la sesión, se publica.
 - **Icono nítido del reproductor.** Extraído a 256 px del propio `.exe` y cacheado.
 - **Pausa cuidado.** La carátula nunca desaparece, la barra se congela y se puede mostrar un
   badge de pausa.
+- **Se actualiza sola.** Al arrancar y cada 6 h consulta GitHub Releases; descarga la nueva
+  versión, verifica su SHA-256 y la instala al cerrar (o al reiniciar desde el menú). Se puede
+  desactivar en el menú del icono.
 - **Todo local.** Sin cuenta, sin telemetría y sin servidores propios: solo el IPC local de
   Discord.
 - **Un solo `.exe`.** Autocontenido, sin instalar .NET. Inicio con Windows opcional (activado
@@ -97,7 +100,9 @@ Universal Presence no tiene servidores ni cuentas. Solo escribe en tu equipo y h
 por su canal local. Para que Discord pueda mostrar la carátula extraída, la sube a Litterbox
 (catbox.moe); se puede desactivar con `"Artwork": { "UploadMode": "None" }`. Para buscar una
 portada cuando el reproductor no la ofrece, envía título/artista/álbum a las API públicas de
-iTunes y Deezer; se puede desactivar con `"Artwork": { "Mode": "None" }`.
+iTunes y Deezer; se puede desactivar con `"Artwork": { "Mode": "None" }`. Para actualizarse,
+consulta la API pública de GitHub al arrancar y cada 6 h (sin cuenta ni token); se puede
+desactivar en el menú del icono o con `"AutoUpdate": false`.
 
 ## Limitaciones conocidas
 

@@ -1,0 +1,347 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text.Json;
+using UniversalPresence.Configuration;
+
+namespace UniversalPresence.Infrastructure;
+
+/// <summary>Una release más nueva publicada en GitHub.</summary>
+public sealed record UpdateInfo(Version Version, string Tag, string DownloadUrl, long Size, string? Sha256);
+
+/// <summary>
+/// Busca, descarga y aplica actualizaciones desde GitHub Releases.
+///
+/// No usa credenciales: la API pública de GitHub permite 60 consultas por hora y aquí se
+/// consulta al arrancar y cada 6 h como mucho. La descarga se verifica con el SHA-256 que
+/// publica la release (si está disponible) y con el tamaño del asset.
+/// </summary>
+public sealed class UpdateService : IDisposable
+{
+    private const string Owner = "itsmilespr";
+    private const string Repo = "UniversalPresence";
+    private const string AssetName = "UniversalPresence.exe";
+    private const long MinExpectedBytes = 20 * 1024 * 1024;
+
+    private static readonly HttpClient Http = CreateClient();
+
+    private readonly Log _log;
+    private readonly string _directory;
+    private readonly CancellationTokenSource _cts = new();
+    private UpdateInfo? _available;
+    private string? _downloadedPath;
+
+    public UpdateService(Log log)
+    {
+        _log = log;
+        _directory = Path.Combine(AppOptions.LocalDataDirectory, "updates");
+        Directory.CreateDirectory(_directory);
+    }
+
+    public Version CurrentVersion { get; } =
+        Normalize(typeof(UpdateService).Assembly.GetName().Version ?? new Version(1, 0, 0));
+
+    public UpdateInfo? Available => _available;
+
+    public bool HasDownloadedUpdate => _downloadedPath is not null && File.Exists(_downloadedPath);
+
+    /// <summary>Devuelve la release más nueva, o null si ya se está al día.</summary>
+    public async Task<UpdateInfo?> CheckAsync()
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest");
+        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var response = await Http.SendAsync(request, _cts.Token).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            _log.Debug($"GitHub respondió {(int)response.StatusCode} al buscar actualizaciones.");
+            return null;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(_cts.Token).ConfigureAwait(false);
+        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: _cts.Token)
+            .ConfigureAwait(false);
+
+        var root = json.RootElement;
+
+        if (!root.TryGetProperty("tag_name", out var tagElement)
+            || tagElement.GetString() is not { Length: > 1 } tag)
+        {
+            return null;
+        }
+
+        tag = tag.Trim();
+
+        if (!Version.TryParse(tag.TrimStart('v', 'V'), out var version))
+        {
+            _log.Debug($"La release '{tag}' no tiene una versión reconocible.");
+            return null;
+        }
+
+        version = Normalize(version);
+
+        if (version.CompareTo(CurrentVersion) <= 0)
+        {
+            _log.Debug($"Sin actualizaciones: la última es {version} y la actual {CurrentVersion}.");
+            return null;
+        }
+
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var asset in assets.EnumerateArray())
+        {
+            if (!asset.TryGetProperty("name", out var name)
+                || !string.Equals(name.GetString(), AssetName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!asset.TryGetProperty("browser_download_url", out var urlElement)
+                || urlElement.GetString() is not { Length: > 0 } downloadUrl)
+            {
+                continue;
+            }
+
+            var size = asset.TryGetProperty("size", out var sizeElement) ? sizeElement.GetInt64() : 0;
+
+            string? sha256 = null;
+            if (asset.TryGetProperty("digest", out var digestElement)
+                && digestElement.GetString() is { Length: > 0 } digest)
+            {
+                digest = digest.Trim();
+                const string prefix = "sha256:";
+                if (digest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    sha256 = digest[prefix.Length..].ToLowerInvariant();
+                }
+            }
+
+            _available = new UpdateInfo(version, tag, downloadUrl, size, sha256);
+            _log.Info($"Actualización disponible: {tag} ({size / 1048576.0:0.0} MB).");
+            return _available;
+        }
+
+        _log.Debug($"La release {tag} no incluye {AssetName}.");
+        return null;
+    }
+
+    /// <summary>Descarga el .exe de la release; null si la descarga no es válida.</summary>
+    public async Task<string?> DownloadAsync(UpdateInfo info)
+    {
+        var target = Path.Combine(_directory, $"UniversalPresence-{info.Tag}.exe");
+        var temp = target + ".part";
+
+        try
+        {
+            using var response = await Http
+                .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, _cts.Token)
+                .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+
+            await using (var file = new FileStream(
+                temp, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                await response.Content.CopyToAsync(file, _cts.Token).ConfigureAwait(false);
+            }
+
+            var length = new FileInfo(temp).Length;
+
+            if (length < MinExpectedBytes || (info.Size > 0 && length != info.Size))
+            {
+                _log.Warn($"La descarga no tiene el tamaño esperado ({length} bytes de {info.Size}).");
+                File.Delete(temp);
+                return null;
+            }
+
+            if (info.Sha256 is { Length: 64 } expected)
+            {
+                var actual = await HashAsync(temp).ConfigureAwait(false);
+                if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    _log.Warn("La descarga no coincide con el SHA-256 de la release; se descarta.");
+                    File.Delete(temp);
+                    return null;
+                }
+
+                _log.Info("SHA-256 de la actualización verificado.");
+            }
+            else
+            {
+                _log.Warn("La release no publica SHA-256; se comprueba solo el tamaño.");
+            }
+
+            File.Move(temp, target, true);
+            _downloadedPath = target;
+            DeleteOlderDownloads(target);
+            _log.Info($"Actualización descargada: {target}");
+            return target;
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(temp);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"No se pudo descargar la actualización: {ex.Message}");
+            TryDelete(temp);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Lanza el reemplazo del .exe y el reinicio cuando este proceso termine. Windows no
+    /// deja sobrescribir un ejecutable en uso, así que un script espera a que el proceso
+    /// desaparezca, copia el nuevo y lo arranca.
+    /// </summary>
+    public bool TryApplyAndRestart()
+    {
+        var source = _downloadedPath;
+        var target = Environment.ProcessPath;
+
+        if (source is null || !File.Exists(source))
+        {
+            _log.Warn("No hay una actualización descargada que aplicar.");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(target)
+            || !target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(target))
+        {
+            _log.Warn("No se pudo determinar el ejecutable que hay que reemplazar.");
+            return false;
+        }
+
+        try
+        {
+            var script = Path.Combine(_directory, "apply-update.ps1");
+            File.WriteAllText(script, ApplyScript);
+
+            var start = new ProcessStartInfo("powershell.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-ExecutionPolicy");
+            start.ArgumentList.Add("Bypass");
+            start.ArgumentList.Add("-File");
+            start.ArgumentList.Add(script);
+            start.ArgumentList.Add("-ProcessId");
+            start.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add("-Source");
+            start.ArgumentList.Add(source);
+            start.ArgumentList.Add("-Target");
+            start.ArgumentList.Add(target);
+
+            Process.Start(start);
+            _log.Info($"Actualización programada: se instalará al cerrar y se reiniciará desde {target}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("No se pudo lanzar el instalador de la actualización.", ex);
+            return false;
+        }
+    }
+
+    private void DeleteOlderDownloads(string keep)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(_directory, "UniversalPresence-*.exe"))
+            {
+                if (!string.Equals(file, keep, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Delete(file);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudieron limpiar descargas anteriores: {ex.Message}");
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // se limpia en la siguiente ejecución
+        }
+    }
+
+    private static async Task<string> HashAsync(string path)
+    {
+        await using var stream = File.OpenRead(path);
+        var hash = await SHA256.HashDataAsync(stream).ConfigureAwait(false);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static Version Normalize(Version version) =>
+        new(version.Major, version.Minor, Math.Max(version.Build, 0));
+
+    private static HttpClient CreateClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("UniversalPresence");
+        return client;
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    private const string ApplyScript = """
+        param(
+          [int]$ProcessId,
+          [string]$Source,
+          [string]$Target
+        )
+
+        # Espera a que la app cierre (máximo 90 s) para poder reemplazar el .exe.
+        $deadline = (Get-Date).AddSeconds(90)
+        while ((Get-Date) -lt $deadline) {
+          if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { break }
+          Start-Sleep -Milliseconds 500
+        }
+
+        Start-Sleep -Milliseconds 800
+
+        $installed = $false
+        for ($i = 0; $i -lt 30; $i++) {
+          try {
+            Copy-Item -LiteralPath $Target -Destination "$Target.bak" -Force -ErrorAction SilentlyContinue
+            Copy-Item -LiteralPath $Source -Destination $Target -Force -ErrorAction Stop
+            $installed = $true
+            break
+          } catch {
+            Start-Sleep -Milliseconds 500
+          }
+        }
+
+        if ($installed) {
+          Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
+        }
+
+        Start-Process -FilePath $Target
+        Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+        """;
+}
