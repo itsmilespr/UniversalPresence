@@ -61,7 +61,7 @@ public sealed class SettingsForm : Form
             Name = "SettingsRoot",
         };
 
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -132,7 +132,7 @@ public sealed class SettingsForm : Form
             ColumnCount = 1,
             RowCount = 2,
         };
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+        playersLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 200f));
         playersLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         playersLayout.Controls.Add(_ignoredList, 0, 0);
         playersLayout.Controls.Add(addRow, 0, 1);
