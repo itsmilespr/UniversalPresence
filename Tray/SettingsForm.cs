@@ -83,7 +83,7 @@ public sealed class SettingsForm : Form
             IntegralHeight = false,
             SelectionMode = SelectionMode.One,
             Name = "IgnoredList",
-            MinimumSize = new Size(0, 200),
+            MinimumSize = new Size(0, 0),
         };
 
         _newPlayer = new TextBox
@@ -136,16 +136,20 @@ public sealed class SettingsForm : Form
         addRow.Controls.Add(addButton, 2, 0);
         addRow.Controls.Add(removeButton, 3, 0);
 
-        var playersLayout = new TableLayoutPanel
+        var playersLayout = new Panel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(0),
+            Name = "PlayersLayout",
         };
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 120f));
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        playersLayout.Controls.Add(_ignoredList, 0, 0);
-        playersLayout.Controls.Add(addRow, 0, 1);
+        _ignoredList.Dock = DockStyle.Top;
+        _ignoredList.Height = 120;
+        addRow.Dock = DockStyle.Top;
+        addRow.Margin = new Padding(0, 8, 0, 0);
+        playersLayout.Controls.Add(_ignoredList);
+        playersLayout.Controls.Add(addRow);
 
         playersGroup.Controls.Add(playersLayout);
 
