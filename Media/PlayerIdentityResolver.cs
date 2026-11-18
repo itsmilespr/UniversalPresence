@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using UniversalPresence.Configuration;
 using UniversalPresence.Infrastructure;
+using UniversalPresence.Localization;
 
 namespace UniversalPresence.Media;
 
@@ -374,9 +375,11 @@ public sealed class PlayerIdentityResolver
 
     private PlayerIdentity ResolveCore(string aumid)
     {
+        var text = PresenceText.For(_options.Language);
+
         if (aumid.Length == 0)
         {
-            return new PlayerIdentity("Reproductor desconocido", aumid, null, "empty");
+            return new PlayerIdentity(text.UnknownPlayer, aumid, null, "empty");
         }
 
         var overridden = _options.ResolvePlayerOverride(aumid);
@@ -395,7 +398,7 @@ public sealed class PlayerIdentityResolver
             return new PlayerIdentity(processName!, aumid, executablePath, "process");
         }
 
-        return new PlayerIdentity(Prettify(aumid), aumid, null, "aumid");
+        return new PlayerIdentity(Prettify(aumid, text.Player), aumid, null, "aumid");
     }
 
     private static bool TryGetRegisteredAppName(string aumid, out string name)
@@ -607,7 +610,7 @@ public sealed class PlayerIdentityResolver
             .ToList();
     }
 
-    private static string Prettify(string aumid)
+    private static string Prettify(string aumid, string fallback)
     {
         var value = aumid.Trim();
 
@@ -637,6 +640,6 @@ public sealed class PlayerIdentityResolver
             value = value["Microsoft.".Length..];
         }
 
-        return string.IsNullOrWhiteSpace(value) ? "Reproductor" : value;
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 }

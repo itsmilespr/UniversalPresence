@@ -1,120 +1,129 @@
 # Universal Presence
 
-**Rich Presence para Discord hecho para Windows.** Muestra lo que estás escuchando —en
-cualquier reproductor— con carátula, barra de progreso e icono del programa, leyendo las
-sesiones de medios del sistema (SMTC). Sin listas blancas, sin cuenta y sin configurar nada.
+**Discord Rich Presence for Windows.** Shows what you are listening to —in any player— with
+cover art, a live progress bar and the player icon, by reading the system media sessions
+(SMTC). No allow-lists, no account, no setup.
 
-[![Última versión](https://img.shields.io/github/v/release/itsmilespr/UniversalPresence?label=descargar&color=6d5efc)](https://github.com/itsmilespr/UniversalPresence/releases/latest)
-[![Licencia MIT](https://img.shields.io/badge/licencia-MIT-6ee7b7)](LICENSE)
-[![Windows 10 y 11](https://img.shields.io/badge/Windows-10%20%7C%2011-4f8cff)](#requisitos)
+[English](README.md) | [Español](README.es.md)
 
-**[Descargar la última versión](https://github.com/itsmilespr/UniversalPresence/releases/latest)** ·
-[Página web](https://itsmilespr.github.io/UniversalPresence/) ·
-[Documentación técnica](TECNICO.md)
+[![Latest release](https://img.shields.io/github/v/release/itsmilespr/UniversalPresence?label=download&color=6d5efc)](https://github.com/itsmilespr/UniversalPresence/releases/latest)
+[![MIT license](https://img.shields.io/badge/license-MIT-6ee7b7)](LICENSE)
+[![Windows 10 and 11](https://img.shields.io/badge/Windows-10%20%7C%2011-4f8cff)](#requirements)
+
+**[Download the latest version](https://github.com/itsmilespr/UniversalPresence/releases/latest)** ·
+[Website](https://itsmilespr.github.io/UniversalPresence/) ·
+[Technical notes (Spanish)](TECNICO.md)
 
 ---
 
-## Qué hace
+## What it does
 
-Abre el ejecutable, reproduce música y tu perfil de Discord muestra la canción con su portada,
-el artista, el álbum, una barra de progreso sincronizada y el icono del reproductor. Si repites
-la misma canción, añade un contador `×2`, `×3`…
+Run the executable, play music, and your Discord profile shows the song with its cover, artist,
+album, a synced progress bar and the player icon. If you replay the same song, it adds a
+`×2`, `×3`… counter.
 
-No hay que crear una aplicación de Discord, ni pegar tokens, ni elegir tu reproductor en una
-lista: si Windows expone la sesión, se publica.
+You do not need to create a Discord application, paste tokens or pick your player from a list:
+if Windows exposes the session, it is published.
 
-## Características
+## Features
 
-- **Sin lista blanca.** Spotify, foobar2000 (Gatefold), VLC, Apple Music, MusicBee, TIDAL,
-  Windows Media Player… cualquier reproductor que use SMTC.
-- **Carátula real.** Se toma del propio reproductor; si no la expone, se busca en iTunes y
-  Deezer en paralelo, con caché en disco para no repetir peticiones.
-- **Barra sincronizada.** Timestamps absolutos, reanclaje al pausar y posición real al
-  reanudar: la barra acompaña al audio aunque saltes canciones.
-- **Cambios al instante.** La app escucha los eventos de Windows y publica en un hilo aparte,
-  con un publicador que solo conserva la última actividad: el límite de Discord (5
-  actualizaciones cada 20 s) nunca bloquea la detección ni los saltos.
-- **Contador de repeticiones.** Detecta que has vuelto a poner la misma canción y muestra
-  `×N` en el estado, sin contar arrastres de la barra ni fallos del reproductor.
-- **Icono nítido del reproductor.** Extraído a 256 px del propio `.exe` y cacheado.
-- **Pausa cuidado.** La carátula nunca desaparece, la barra se congela y se puede mostrar un
-  badge de pausa.
-- **Se actualiza sola.** Al arrancar y cada 6 h consulta GitHub Releases; descarga la nueva
-  versión, verifica su SHA-256 y la instala al cerrar (o al reiniciar desde el menú). Se puede
-  desactivar en el menú del icono.
-- **Comparte la app en tu perfil.** La actividad lleva dos botones, «Descargar» y «Cómo
-  funciona», para que quien vea lo que escuchas llegue al proyecto en un clic.
-- **Todo local.** Sin cuenta, sin telemetría y sin servidores propios: solo el IPC local de
-  Discord.
-- **Un solo `.exe`.** Autocontenido, sin instalar .NET. Inicio con Windows opcional (activado
-  por defecto) desde la configuración.
+- **No allow-list.** Spotify, foobar2000 (Gatefold), VLC, Apple Music, MusicBee, TIDAL,
+  Windows Media Player… any player that uses SMTC.
+- **Real cover art.** Taken from the player itself; if it does not expose one, iTunes and Deezer
+  are searched in parallel, with a disk cache so requests are not repeated.
+- **Synced progress bar.** Absolute timestamps, re-anchoring on pause and the real position on
+  resume: the bar follows the audio even when you skip tracks.
+- **Instant changes.** The app listens to Windows events and publishes on a separate thread,
+  with a publisher that only keeps the latest activity: Discord's rate limit (5 updates per
+  20 s) never blocks detection or skips.
+- **Repeat counter.** Detects that you restarted the same song and shows `×N` in the state,
+  without counting seeks or player glitches.
+- **Sharp player icon.** Extracted at 256 px from the player's own `.exe` and cached.
+- **Careful pause.** The cover never disappears, the bar freezes and an optional pause badge
+  can be shown.
+- **Self-updating.** Checks GitHub Releases on startup and every 6 h; downloads the new build,
+  verifies its SHA-256 and installs it on exit (or immediately from the menu). Can be disabled
+  from the tray menu.
+- **Share the app from your profile.** The activity carries two buttons, “Download” and “How it
+  works”, so anyone who sees what you are playing can reach the project in one click.
+- **Multi-language presence.** The text published to Discord is available in 18 languages and
+  defaults to English: `"Language": "en"` (also `es`, `pt`, `fr`, `de`, `it`, `nl`, `pl`, `ru`,
+  `uk`, `tr`, `ja`, `ko`, `zh-CN`, `zh-TW`, `id`, `sv`, `cs`).
+- **Local by default.** No account, no telemetry and no own servers: only Discord's local IPC.
+- **A single `.exe`.** Self-contained, no .NET install required. Optional start with Windows
+  (enabled by default) from the settings window.
 
-## Requisitos
+## Requirements
 
-- Windows 10 (1809 o superior) o Windows 11, **64 bits**.
-- Discord abierto para que se muestre la actividad.
-- Para usar el ejecutable publicado: **nada más** (incluye el runtime de .NET 8).
-- Para compilar: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+- Windows 10 (1809 or later) or Windows 11, **64-bit**.
+- Discord running for the activity to appear.
+- To use the published executable: **nothing else** (the .NET 8 runtime is bundled).
+- To build: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 
-## Instalación
+## Installation
 
-1. Descarga `UniversalPresence.exe` desde
+1. Download `UniversalPresence.exe` from
    [Releases](https://github.com/itsmilespr/UniversalPresence/releases/latest).
-2. Ejecútalo. Aparece en la bandeja del sistema, sin ventana principal.
-3. Reproduce música y abre Discord.
+2. Run it. It appears in the notification area, with no main window.
+3. Play music and open Discord.
 
-No hace falta instalar nada ni ejecutar como administrador. Windows puede mostrar el aviso de
-SmartScreen porque el binario no está firmado: «Más información» → «Ejecutar de todas formas».
+Nothing to install and no administrator rights are needed. Windows may show a SmartScreen
+warning because the binary is not code-signed: “More info” → “Run anyway”.
 
-## Uso
+## Usage
 
-El menú del icono de la bandeja tiene lo esencial:
+The tray menu has the essentials:
 
-| Opción | Qué hace |
+| Option | What it does |
 | --- | --- |
-| Estado | Canción actual, reproductor y estado de la conexión con Discord. |
-| Pausar / Reanudar | Deja de publicar (o limpia la presencia) sin cerrar la app. |
-| Configuración… | Ventana con las opciones: inicio con Windows, reproducciones ignoradas, barra, pausa y carátulas. |
-| Abrir carpeta de registros | `%LOCALAPPDATA%\UniversalPresence\logs`. |
-| Salir | Cierra la app y limpia la actividad de Discord. |
+| Status | Current song, player and Discord connection state. |
+| Pause / Resume | Stops publishing (or clears the presence) without closing the app. |
+| Settings… | Window with the options: start with Windows, ignored players, progress bar, pause and artwork. |
+| Open logs folder | `%LOCALAPPDATA%\UniversalPresence\logs`. |
+| Exit | Closes the app and clears the Discord activity. |
 
-La configuración se guarda en `%APPDATA%\UniversalPresence\config.json` y se aplica en caliente
-al guardar. Todas las claves están documentadas en [TECNICO.md](TECNICO.md#configuración).
+Settings are stored in `%APPDATA%\UniversalPresence\config.json` and applied live when saved.
+Every key is documented in [TECNICO.md](TECNICO.md#configuración) (Spanish).
 
-## Compilar desde el código
+> The settings window itself is currently in Spanish. The text published to Discord, the
+> activity buttons and the README are localized; the UI translation is the next step.
+
+## Build from source
 
 ```bash
-# Compilar
+# Build
 dotnet build UniversalPresence.csproj -c Release
 
-# Ejecutable autocontenido de un solo archivo
+# Self-contained single-file executable
 dotnet publish UniversalPresence.csproj -c Release -r win-x64 --self-contained true \
     -p:PublishSingleFile=true -p:DebugType=None -o publish
 ```
 
-El proyecto usa .NET 8 (WinForms) y **no tiene dependencias NuGet**: el protocolo IPC de
-Discord está implementado a mano. En cada push se compila con GitHub Actions y al empujar una
-etiqueta `v*` se publica la release con el `.exe` adjunto.
+The project uses .NET 8 (WinForms) and has **no NuGet dependencies**: the Discord IPC protocol
+is implemented by hand. Every push is built with GitHub Actions, and pushing a `v*` tag
+publishes the release with the `.exe` attached.
 
-## Privacidad
+## Privacy
 
-Universal Presence no tiene servidores ni cuentas. Solo escribe en tu equipo y habla con Discord
-por su canal local. Para que Discord pueda mostrar la carátula extraída, la sube a Litterbox
-(catbox.moe); se puede desactivar con `"Artwork": { "UploadMode": "None" }`. Para buscar una
-portada cuando el reproductor no la ofrece, envía título/artista/álbum a las API públicas de
-iTunes y Deezer; se puede desactivar con `"Artwork": { "Mode": "None" }`. Para actualizarse,
-consulta la API pública de GitHub al arrancar y cada 6 h (sin cuenta ni token); se puede
-desactivar en el menú del icono o con `"AutoUpdate": false`.
+Universal Presence has no servers and no accounts. It only writes on your machine and talks to
+Discord over its local channel. So Discord can display the extracted cover, it is uploaded to
+Litterbox (catbox.moe); this can be disabled with `"Artwork": { "UploadMode": "None" }`. To find
+a cover when the player does not provide one, title/artist/album are sent to the public iTunes
+and Deezer APIs; this can be disabled with `"Artwork": { "Mode": "None" }`. To update itself, it
+queries the public GitHub API on startup and every 6 h (no account or token); this can be
+disabled from the tray menu or with `"AutoUpdate": false`.
 
-## Limitaciones conocidas
+## Known limitations
 
-- Una sola actividad a la vez: si suenan dos reproductores, se publica el que esté en
-  reproducción (o el que Windows marque como sesión actual).
-- Los navegadores están excluidos por defecto para que una pestaña de YouTube no aparezca como
-  música; se puede cambiar en «Reproductores ignorados».
-- Algunos reproductores no exponen carátula o duración por SMTC: se muestran los campos que sí
-  ofrecen.
+- One activity at a time: if two players are playing, the one that is playing (or the one
+  Windows reports as the current session) is published.
+- Browsers are ignored by default so a YouTube tab does not appear as music; this can be
+  changed in “Ignored players”.
+- Some players do not expose cover art or duration over SMTC: the fields they do provide are
+  shown.
+- The settings window is only in Spanish for now.
+- The executable is not code-signed, so SmartScreen may warn on first run.
 
-## Licencia
+## License
 
-[MIT](LICENSE). Puedes usarlo, modificarlo y redistribuirlo conservando el aviso de copyright.
+[MIT](LICENSE). You can use, modify and redistribute it while keeping the copyright notice.

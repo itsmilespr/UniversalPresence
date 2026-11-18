@@ -15,10 +15,17 @@
     <Product>Universal Presence</Product>
     <AssemblyTitle>Universal Presence</AssemblyTitle>
     <Description>Detects every Windows SMTC media session and publishes it to Discord Rich Presence without any player whitelist.</Description>
-    <Version>1.4.4</Version>
+    <Version>1.4.5</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- Menos memoria retenida: el heap gestionado es diminuto y la app vive en la bandeja. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
+
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
 
   <PropertyGroup>
     <!-- Self-contained single-file publishing is documented in README.md. -->

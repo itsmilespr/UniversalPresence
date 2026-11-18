@@ -19,8 +19,10 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | `Media/ArtworkLookupService.cs` | Busca una portada pública en **iTunes Search** y **Deezer** en paralelo, con caché de 6 h. |
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
 | `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
+| `Core/PresenceEngine.cs` | Si la memoria privada supera 160 MB (comprobado cada 30 s) fuerza un GC de gen2 en segundo plano: las referencias WinRT solo se liberan ahí y el heap gestionado es de ~2 MB. |
 | `Infrastructure/UpdateService.cs` | Consulta GitHub Releases, descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso. |
-| `Media/SmtcMonitor.cs` | Cachea sesiones, sesión actual y metadatos (5 s + evento) para no crear objetos WinRT cada segundo; `Core/PresenceEngine` fuerza un GC de gen2 si la memoria privada supera 200 MB. |
+| `Media/SmtcMonitor.cs` | Cachea sesiones, sesión actual, metadatos, playback y timeline (eventos + TTL de 30 s/6 s) para no crear objetos WinRT cada segundo. La posición se proyecta desde `LastUpdated`, así que la barra sigue exacta. |
+| `Localization/PresenceText.cs` | Textos de la presencia en 18 idiomas (inglés por defecto): estado, álbum y botones. Se elige con `Language` en `config.json`. |
 | `Discord/DiscordIpcClient.cs` | Named pipe `discord-ipc-0..9`, handshake `{v:1, client_id}`, frames de 8 bytes (op + longitud), `PING`→`PONG`, `SET_ACTIVITY`. |
 | `Discord/DiscordPresenceService.cs` | Conexión perezosa, reconexión con backoff (1 s → 30 s), ventana de 5 actualizaciones / 20 s y limpieza de la actividad al salir. |
 | `Core/PresenceEngine.cs` | Bucle de lectura y publicación, publicador independiente, contador de repeticiones y estado para la bandeja. |

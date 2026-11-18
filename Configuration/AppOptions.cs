@@ -139,6 +139,13 @@ public sealed class AppOptions
     public bool StartWithWindows { get; set; } = true;
 
     /// <summary>
+    /// Idioma del texto que se publica en Discord (ISO: en, es, pt, fr, de, it, nl, pl,
+    /// ru, uk, tr, ja, ko, zh-CN, zh-TW, id, sv, cs). Por defecto inglés; un idioma
+    /// desconocido cae al inglés.
+    /// </summary>
+    public string Language { get; set; } = "en";
+
+    /// <summary>
     /// Busca actualizaciones en GitHub Releases al arrancar y cada 6 h, y las instala al
     /// cerrar. Se puede desactivar desde el menú del icono de bandeja.
     /// </summary>
@@ -251,6 +258,7 @@ public sealed class AppOptions
         AppIconAssetKey = AppIconAssetKey?.Trim() ?? "";
         Artwork ??= new ArtworkOptions();
         Artwork.Normalize();
+        Language = string.IsNullOrWhiteSpace(Language) ? "en" : Language.Trim();
 
         IgnoredPlayers = (IgnoredPlayers ?? new List<string>())
             .Where(value => !string.IsNullOrWhiteSpace(value))

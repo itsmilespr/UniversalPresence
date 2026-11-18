@@ -1,5 +1,6 @@
 using UniversalPresence.Configuration;
 using UniversalPresence.Discord;
+using UniversalPresence.Localization;
 using UniversalPresence.Media;
 
 namespace UniversalPresence.Core;
@@ -36,6 +37,7 @@ public sealed class ActivityFactory
     public DiscordActivity? Create(MediaSnapshot snapshot)
     {
         var status = snapshot.Status;
+        var text = PresenceText.For(_options.Language);
 
         if (status == PlaybackState.Stopped && _options.TreatStoppedAsPaused)
         {
@@ -87,10 +89,10 @@ public sealed class ActivityFactory
 
         // Si hay álbum, mostrarlo con prefijo "En" para que quede más bonito en el tooltip
         var largeText = !string.IsNullOrWhiteSpace(album) && _options.ShowAlbum
-            ? $"En {album}"
+            ? string.Format(text.InAlbum, album)
             : artist;
 
-        var smallText = ResolveSmallText(status, player);
+        var smallText = ResolveSmallText(status, player, text);
 
         var activityName = _options.UsePlayerNameAsActivityName && !string.IsNullOrWhiteSpace(player)
             ? Clip(player)
@@ -112,13 +114,13 @@ public sealed class ActivityFactory
             // 1 = STATE: the member list shows "Listening to <artist>" instead of the
             // application name. 0 = NAME, 2 = DETAILS.
             StatusDisplayType = 1,
-            Details = Clip(FirstNonEmpty(snapshot.Title, artist, player, "Reproduciendo")),
+            Details = Clip(FirstNonEmpty(snapshot.Title, artist, player, text.Playing)),
             State = ClipNullable(state),
             Timestamps = BuildTimestamps(snapshot, status),
             Buttons = new List<DiscordButton>
             {
-                new() { Label = "Descargar", Url = DownloadUrl },
-                new() { Label = "Cómo funciona", Url = HowItWorksUrl },
+                new() { Label = text.Download, Url = DownloadUrl },
+                new() { Label = text.HowItWorks, Url = HowItWorksUrl },
             },
             Assets = new DiscordAssets
             {
@@ -216,13 +218,13 @@ public sealed class ActivityFactory
         return NullIfEmpty(_options.PlayerAssetKey);
     }
 
-    private string? ResolveSmallText(PlaybackState status, string player)
+    private string? ResolveSmallText(PlaybackState status, string player, PresenceText text)
     {
         if (status == PlaybackState.Paused
             && _options.ShowPausedIcon
             && !string.IsNullOrWhiteSpace(_options.PauseAssetKey))
         {
-            return "Pausado";
+            return text.Paused;
         }
 
         if (!string.IsNullOrWhiteSpace(_options.AppIconAssetKey))

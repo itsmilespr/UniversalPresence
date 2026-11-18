@@ -185,7 +185,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return;
         }
 
-        _nextMemoryCheck = now.AddSeconds(20);
+        _nextMemoryCheck = now.AddSeconds(30);
 
         long privateBytes;
         try
@@ -203,7 +203,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return;
         }
 
-        _log.Debug($"Memoria privada {privateBytes / (1024 * 1024)} MB; liberando referencias WinRT.");
+        var gc = GC.GetGCMemoryInfo();
+        _log.Debug(
+            $"Memoria privada {privateBytes / (1024 * 1024)} MB " +
+            $"(GC comprometido {gc.TotalCommittedBytes / (1024 * 1024)} MB, " +
+            $"heap vivo {GC.GetTotalMemory(false) / (1024 * 1024)} MB); liberando referencias WinRT.");
 
         _ = Task.Run(() =>
         {

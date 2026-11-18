@@ -23,14 +23,20 @@ public sealed class SmtcMonitor : IDisposable
     /// referencias nativas se acumulaban hasta cientos de MB. Se cachean y solo se releen
     /// cuando el evento correspondiente avisa (o cada pocos segundos, como red de seguridad).
     /// </summary>
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(5);
+    // Los eventos son la vía normal; estos TTL son solo la red de seguridad para
+    // reproductores que no los emiten. Cuanto más largos, menos objetos WinRT se crean.
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(6);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
     private readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> _watched =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, MetadataCache> _metadata = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PlaybackCache> _playback = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TimelineCache> _timelines = new(StringComparer.OrdinalIgnoreCase);
 
     private IReadOnlyList<GlobalSystemMediaTransportControlsSession> _sessions =
         Array.Empty<GlobalSystemMediaTransportControlsSession>();
@@ -44,6 +50,8 @@ public sealed class SmtcMonitor : IDisposable
     private DateTimeOffset _currentReadAt = DateTimeOffset.MinValue;
 
     private int _metadataVersion;
+    private int _playbackVersion;
+    private int _timelineVersion;
 
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private int _consecutiveFailures;
@@ -275,8 +283,7 @@ public sealed class SmtcMonitor : IDisposable
             {
                 aumid = (session.SourceAppUserModelId ?? string.Empty).Trim();
 
-                var playbackInfo = session.GetPlaybackInfo();
-                var status = MapStatus(playbackInfo?.PlaybackStatus);
+                var status = GetStatusCached(session, aumid);
                 if (status == PlaybackState.Closed)
                 {
                     return null;
@@ -317,7 +324,8 @@ public sealed class SmtcMonitor : IDisposable
                     return null;
                 }
 
-                var (position, duration, lastUpdated) = ReadTimeline(session, status, projectPosition);
+                var (position, duration, lastUpdated) = ReadTimelineCached(
+                    session, aumid, status, projectPosition, force: !projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
                 var artwork = await _artwork.GetAsync(media?.Thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
 
@@ -367,56 +375,157 @@ public sealed class SmtcMonitor : IDisposable
         return null;
     }
 
-    private static (TimeSpan Position, TimeSpan Duration, DateTimeOffset LastUpdated) ReadTimeline(
+    /// <summary>
+    /// Estado de reproducción cacheado: cambiar de estado dispara PlaybackInfoChanged, así
+    /// que leerlo cada segundo solo creaba un objeto WinRT más por vuelta.
+    /// </summary>
+    private PlaybackState GetStatusCached(
         GlobalSystemMediaTransportControlsSession session,
-        PlaybackState status,
-        bool projectPosition)
+        string aumid)
     {
-        try
+        if (aumid.Length == 0)
         {
-            var timeline = session.GetTimelineProperties();
-            if (timeline is null)
+            return MapStatus(session.GetPlaybackInfo()?.PlaybackStatus);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var version = Volatile.Read(ref _playbackVersion);
+
+        lock (_metadataGate)
+        {
+            if (_playback.TryGetValue(aumid, out var cached)
+                && cached.Version == version
+                && now - cached.At < PlaybackTtl)
+            {
+                return cached.Status;
+            }
+        }
+
+        var status = MapStatus(session.GetPlaybackInfo()?.PlaybackStatus);
+
+        lock (_metadataGate)
+        {
+            _playback[aumid] = new PlaybackCache { Status = status, Version = version, At = now };
+        }
+
+        return status;
+    }
+
+    /// <summary>
+    /// Timeline cacheada: se guarda la posición cruda y el LastUpdated del reproductor, y la
+    /// posición se proyecta hacia delante en cada vuelta. Así la barra sigue exacta sin
+    /// crear un objeto WinRT por segundo (un seek real dispara el evento y refresca ya).
+    /// </summary>
+    private (TimeSpan Position, TimeSpan Duration, DateTimeOffset LastUpdated) ReadTimelineCached(
+        GlobalSystemMediaTransportControlsSession session,
+        string aumid,
+        PlaybackState status,
+        bool projectPosition,
+        bool force)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var version = Volatile.Read(ref _timelineVersion);
+        TimelineCache? cache = null;
+
+        if (aumid.Length > 0)
+        {
+            lock (_metadataGate)
+            {
+                _timelines.TryGetValue(aumid, out cache);
+            }
+        }
+
+        var valid = cache is not null
+            && !force
+            && cache.Version == version
+            && now - cache.At < TimelineTtl;
+
+        if (!valid)
+        {
+            try
+            {
+                var timeline = session.GetTimelineProperties();
+                if (timeline is null)
+                {
+                    return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
+                }
+
+                var duration = timeline.EndTime > timeline.StartTime
+                    ? timeline.EndTime - timeline.StartTime
+                    : TimeSpan.Zero;
+
+                if (duration < TimeSpan.Zero)
+                {
+                    duration = TimeSpan.Zero;
+                }
+
+                cache = new TimelineCache
+                {
+                    Position = timeline.Position,
+                    Duration = duration,
+                    LastUpdated = timeline.LastUpdatedTime,
+                    Version = version,
+                    At = now,
+                };
+
+                if (aumid.Length > 0)
+                {
+                    lock (_metadataGate)
+                    {
+                        _timelines[aumid] = cache;
+                    }
+                }
+            }
+            catch
             {
                 return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
             }
-
-            var duration = timeline.EndTime > timeline.StartTime
-                ? timeline.EndTime - timeline.StartTime
-                : TimeSpan.Zero;
-
-            if (duration < TimeSpan.Zero)
-            {
-                duration = TimeSpan.Zero;
-            }
-
-            var position = timeline.Position;
-
-            if (projectPosition && status == PlaybackState.Playing)
-            {
-                var drift = DateTimeOffset.UtcNow - timeline.LastUpdatedTime.ToUniversalTime();
-                if (drift > TimeSpan.Zero && drift < TimeSpan.FromMinutes(10))
-                {
-                    // Players rarely update Position every second; project it forward.
-                    position += drift;
-                }
-            }
-
-            if (position < TimeSpan.Zero)
-            {
-                position = TimeSpan.Zero;
-            }
-
-            if (duration > TimeSpan.Zero && position > duration)
-            {
-                position = duration;
-            }
-
-            return (position, duration, timeline.LastUpdatedTime);
         }
-        catch
+
+        var position = cache!.Position;
+
+        if (projectPosition && status == PlaybackState.Playing)
         {
-            return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
+            var drift = now - cache.LastUpdated.ToUniversalTime();
+            if (drift > TimeSpan.Zero && drift < TimeSpan.FromMinutes(10))
+            {
+                position += drift;
+            }
         }
+
+        if (position < TimeSpan.Zero)
+        {
+            position = TimeSpan.Zero;
+        }
+
+        if (cache.Duration > TimeSpan.Zero && position > cache.Duration)
+        {
+            position = cache.Duration;
+        }
+
+        return (position, cache.Duration, cache.LastUpdated);
+    }
+
+    private sealed class PlaybackCache
+    {
+        public PlaybackState Status { get; init; }
+
+        public int Version { get; init; }
+
+        public DateTimeOffset At { get; init; }
+    }
+
+    private sealed class TimelineCache
+    {
+        public TimeSpan Position { get; init; }
+
+        public TimeSpan Duration { get; init; }
+
+        public DateTimeOffset LastUpdated { get; init; }
+
+        public int Version { get; init; }
+
+        public DateTimeOffset At { get; init; }
     }
 
     private static PlaybackState MapStatus(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status) => status switch
@@ -516,6 +625,16 @@ public sealed class SmtcMonitor : IDisposable
             {
                 _metadata.Remove(key);
             }
+
+            foreach (var key in _playback.Keys.Where(key => !live.Contains(key)).ToList())
+            {
+                _playback.Remove(key);
+            }
+
+            foreach (var key in _timelines.Keys.Where(key => !live.Contains(key)).ToList())
+            {
+                _timelines.Remove(key);
+            }
         }
     }
 
@@ -579,11 +698,19 @@ public sealed class SmtcMonitor : IDisposable
 
     private void OnSessionPlaybackInfoChanged(
         GlobalSystemMediaTransportControlsSession sender,
-        PlaybackInfoChangedEventArgs args) => OnManagerChanged();
+        PlaybackInfoChangedEventArgs args)
+    {
+        Interlocked.Increment(ref _playbackVersion);
+        OnManagerChanged();
+    }
 
     private void OnSessionTimelinePropertiesChanged(
         GlobalSystemMediaTransportControlsSession sender,
-        TimelinePropertiesChangedEventArgs args) => OnManagerChanged();
+        TimelinePropertiesChangedEventArgs args)
+    {
+        Interlocked.Increment(ref _timelineVersion);
+        OnManagerChanged();
+    }
 
     public void Dispose()
     {
@@ -645,10 +772,14 @@ public sealed class SmtcMonitor : IDisposable
         Interlocked.Increment(ref _sessionsVersion);
         Interlocked.Increment(ref _currentVersion);
         Interlocked.Increment(ref _metadataVersion);
+        Interlocked.Increment(ref _playbackVersion);
+        Interlocked.Increment(ref _timelineVersion);
 
         lock (_metadataGate)
         {
             _metadata.Clear();
+            _playback.Clear();
+            _timelines.Clear();
         }
     }
 
