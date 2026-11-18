@@ -170,7 +170,7 @@ public sealed class SettingsForm : Form
         var page = new TabPage(title)
         {
             BackColor = PageBg,
-            Padding = new Padding(12),
+            Padding = new Padding(8),
             AutoScroll = true,
         };
         var card = new Panel
@@ -180,7 +180,9 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             BackColor = CardBg,
             Padding = new Padding(16),
+            Margin = new Padding(0, 0, 0, 8),
         };
+        content.Dock = DockStyle.Top;
         card.Controls.Add(content);
         page.Controls.Add(card);
         return page;
@@ -318,26 +320,16 @@ public sealed class SettingsForm : Form
         pauseRow.Controls.Add(pauseLabel);
         pauseRow.Controls.Add(_pauseRefresh);
 
-        var group = MakeGroup(_ui.BehaviorGroup);
-        var layout = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        layout.Controls.Add(_appendPlayer);
-        layout.Controls.Add(_usePlayerNameAsActivity);
-        layout.Controls.Add(_hideIfNoArtwork);
-        layout.Controls.Add(_startWithWindows);
-        layout.Controls.Add(_showProgress);
-        layout.Controls.Add(_darkMode);
-        layout.Controls.Add(pauseRow);
-        group.Controls.Add(layout);
-
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        panel.Controls.Add(group);
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var header = new Label { Text = _ui.BehaviorGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
+        panel.Controls.Add(header);
+        panel.Controls.Add(_appendPlayer);
+        panel.Controls.Add(_usePlayerNameAsActivity);
+        panel.Controls.Add(_hideIfNoArtwork);
+        panel.Controls.Add(_startWithWindows);
+        panel.Controls.Add(_showProgress);
+        panel.Controls.Add(_darkMode);
+        panel.Controls.Add(pauseRow);
         return panel;
     }
 
@@ -350,24 +342,14 @@ public sealed class SettingsForm : Form
         _pauseAssetKey = CreateAssetKeyBox(_ui.PauseAssetKeyLabel, _options.PauseAssetKey, "PauseAssetKeyBox");
         _appIconAssetKey = CreateAssetKeyBox(_ui.AppIconAssetKeyLabel, _options.AppIconAssetKey, "AppIconAssetKeyBox");
 
-        var group = MakeGroup(_ui.PausedGroup);
-        var layout = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        layout.Controls.Add(_showPausedMedia);
-        layout.Controls.Add(_pauseResetProgress);
-        layout.Controls.Add(_showPausedIcon);
-        layout.Controls.Add(_pauseAssetKey);
-        layout.Controls.Add(_appIconAssetKey);
-        group.Controls.Add(layout);
-
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        panel.Controls.Add(group);
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var header = new Label { Text = _ui.PausedGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
+        panel.Controls.Add(header);
+        panel.Controls.Add(_showPausedMedia);
+        panel.Controls.Add(_pauseResetProgress);
+        panel.Controls.Add(_showPausedIcon);
+        panel.Controls.Add(_pauseAssetKey);
+        panel.Controls.Add(_appIconAssetKey);
         return panel;
     }
 
@@ -383,32 +365,21 @@ public sealed class SettingsForm : Form
         _stateTemplateBox = new TextBox { Text = _options.StateTemplate, Dock = DockStyle.Top, Name = "StateTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _largeTextTemplateBox = new TextBox { Text = _options.LargeTextTemplate, Dock = DockStyle.Top, Name = "LargeTextTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
 
-        var group = MakeGroup("Funciones nuevas");
-        var layout = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        layout.Controls.Add(_showOverlay);
-        layout.Controls.Add(_gamingMode);
-        layout.Controls.Add(_showTrackChangeToast);
-        layout.Controls.Add(_globalHotkeys);
-        layout.Controls.Add(_listeningHistory);
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var header = new Label { Text = "Funciones nuevas", AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
+        panel.Controls.Add(header);
+        panel.Controls.Add(_showOverlay);
+        panel.Controls.Add(_gamingMode);
+        panel.Controls.Add(_showTrackChangeToast);
+        panel.Controls.Add(_globalHotkeys);
+        panel.Controls.Add(_listeningHistory);
 
-        layout.Controls.Add(new Label { Text = "Plantilla Details (usa {title}, {artist}, {album}, {player}):", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        layout.Controls.Add(_detailsTemplateBox);
-        layout.Controls.Add(new Label { Text = "Plantilla State:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        layout.Controls.Add(_stateTemplateBox);
-        layout.Controls.Add(new Label { Text = "Plantilla Large text:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        layout.Controls.Add(_largeTextTemplateBox);
-
-        group.Controls.Add(layout);
-
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        panel.Controls.Add(group);
+        panel.Controls.Add(new Label { Text = "Plantilla Details (usa {title}, {artist}, {album}, {player}):", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        panel.Controls.Add(_detailsTemplateBox);
+        panel.Controls.Add(new Label { Text = "Plantilla State:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        panel.Controls.Add(_stateTemplateBox);
+        panel.Controls.Add(new Label { Text = "Plantilla Large text:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        panel.Controls.Add(_largeTextTemplateBox);
         return panel;
     }
 
@@ -419,24 +390,18 @@ public sealed class SettingsForm : Form
         _lastFmUserBox = new TextBox { Text = _options.LastFmUser, Dock = DockStyle.Top, Name = "LastFmUserBox", PlaceholderText = "Usuario", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _lastFmSessionKeyBox = new TextBox { Text = _options.LastFmSessionKey, Dock = DockStyle.Top, Name = "LastFmSessionKeyBox", PlaceholderText = "Session key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
 
-        var group = MakeGroup("Last.fm (scrobbling)");
-        var layout = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        layout.Controls.Add(new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
-        layout.Controls.Add(_lastFmApiKeyBox);
-        layout.Controls.Add(new Label { Text = "Shared secret:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        layout.Controls.Add(_lastFmSecretBox);
-        layout.Controls.Add(new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        layout.Controls.Add(_lastFmUserBox);
-        layout.Controls.Add(new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        layout.Controls.Add(_lastFmSessionKeyBox);
-        layout.Controls.Add(new Label
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var header = new Label { Text = "Last.fm (scrobbling)", AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
+        panel.Controls.Add(header);
+        panel.Controls.Add(new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
+        panel.Controls.Add(_lastFmApiKeyBox);
+        panel.Controls.Add(new Label { Text = "Shared secret:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        panel.Controls.Add(_lastFmSecretBox);
+        panel.Controls.Add(new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        panel.Controls.Add(_lastFmUserBox);
+        panel.Controls.Add(new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        panel.Controls.Add(_lastFmSessionKeyBox);
+        panel.Controls.Add(new Label
         {
             Text = "Deja vacío para desactivar el scrobbling. Necesitas una cuenta Last.fm y una API key.",
             AutoSize = true,
@@ -444,10 +409,6 @@ public sealed class SettingsForm : Form
             Margin = new Padding(0, 10, 0, 0),
             Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
         });
-        group.Controls.Add(layout);
-
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        panel.Controls.Add(group);
         return panel;
     }
 
