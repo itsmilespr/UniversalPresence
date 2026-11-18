@@ -11,25 +11,52 @@ namespace UniversalPresence.Tray;
 /// </summary>
 public sealed class SettingsForm : Form
 {
-    private readonly AppOptions _options;
-    private readonly Action _onSaved;
-    private readonly List<string> _ignored;
-    private readonly UiText _ui;
-    private readonly ListBox _ignoredList;
-    private readonly TextBox _newPlayer;
-    private readonly CheckBox _appendPlayer;
-    private readonly CheckBox _usePlayerNameAsActivity;
-    private readonly CheckBox _hideIfNoArtwork;
-    private readonly CheckBox _startWithWindows;
-    private readonly CheckBox _showProgress;
-    private readonly NumericUpDown _pauseRefresh;
-    private readonly CheckBox _showPausedMedia;
-    private readonly CheckBox _pauseResetProgress;
-    private readonly CheckBox _showPausedIcon;
-    private readonly Control _pauseAssetKey;
-    private readonly Control _appIconAssetKey;
+    private AppOptions _options;
+    private Action _onSaved;
+    private List<string> _ignored;
+    private UiText _ui;
+    private TabControl _tabs;
+
+    // --- Blacklist tab ----------------------------------------------------------
+    private ListBox _ignoredList = null!;
+    private TextBox _newPlayer = null!;
+
+    // --- Behavior tab -----------------------------------------------------------
+    private CheckBox _appendPlayer = null!;
+    private CheckBox _usePlayerNameAsActivity = null!;
+    private CheckBox _hideIfNoArtwork = null!;
+    private CheckBox _startWithWindows = null!;
+    private CheckBox _showProgress = null!;
+    private NumericUpDown _pauseRefresh = null!;
+
+    // --- Paused tab -------------------------------------------------------------
+    private CheckBox _showPausedMedia = null!;
+    private CheckBox _pauseResetProgress = null!;
+    private CheckBox _showPausedIcon = null!;
+    private Control _pauseAssetKey = null!;
+    private Control _appIconAssetKey = null!;
+
+    // --- Presence tab -----------------------------------------------------------
+    private CheckBox _showOverlay = null!;
+    private CheckBox _gamingMode = null!;
+    private CheckBox _showTrackChangeToast = null!;
+    private CheckBox _globalHotkeys = null!;
+    private CheckBox _listeningHistory = null!;
+    private TextBox _detailsTemplateBox = null!;
+    private TextBox _stateTemplateBox = null!;
+    private TextBox _largeTextTemplateBox = null!;
+
+    // --- Last.fm tab ------------------------------------------------------------
+    private TextBox _lastFmApiKeyBox = null!;
+    private TextBox _lastFmUserBox = null!;
+    private TextBox _lastFmSessionKeyBox = null!;
+
     private bool _cancelled;
     private bool _saved;
+
+    private static readonly Color Accent = Color.FromArgb(0, 120, 212);
+    private static readonly Color CardBg = Color.White;
+    private static readonly Color PageBg = Color.FromArgb(243, 245, 249);
 
     public SettingsForm(AppOptions options, Action onSaved)
     {
@@ -39,342 +66,67 @@ public sealed class SettingsForm : Form
         _ui = UiText.For(options.Language);
 
         Text = _ui.SettingsTitle;
-        Font = new Font("Segoe UI", 9.75f, FontStyle.Regular, GraphicsUnit.Point);
-        BackColor = Color.FromArgb(248, 249, 252);
+        Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point);
+        BackColor = PageBg;
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(560, 720);
-        MinimumSize = new Size(520, 520);
-        AutoScroll = true;
-        Padding = new Padding(14);
+        ClientSize = new Size(620, 740);
+        MinimumSize = new Size(560, 600);
         Icon = TrayIcons.Get(TrayVisualState.Playing);
 
-        var root = new TableLayoutPanel
+        // ---- Tab control -------------------------------------------------------
+        _tabs = new TabControl
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 5,
-            Name = "SettingsRoot",
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+            Padding = new Point(12, 6),
         };
+        _tabs.TabPages.Add(MakeTab("Jugadores", BuildPlayersTab()));
+        _tabs.TabPages.Add(MakeTab("Comportamiento", BuildBehaviorTab()));
+        _tabs.TabPages.Add(MakeTab("Pausa", BuildPausedTab()));
+        _tabs.TabPages.Add(MakeTab("Presencia", BuildPresenceTab()));
+        _tabs.TabPages.Add(MakeTab("Last.fm", BuildLastFmTab()));
 
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        // --- Ignored players ---------------------------------------------------------
-        var playersGroup = new GroupBox
-        {
-            Text = _ui.IgnoredPlayersGroup,
-            Dock = DockStyle.Fill,
-            Padding = new Padding(10),
-            Margin = new Padding(0),
-            Name = "PlayersGroup",
-        };
-
-        _ignoredList = new ListBox
-        {
-            Dock = DockStyle.Fill,
-            IntegralHeight = false,
-            SelectionMode = SelectionMode.One,
-            Name = "IgnoredList",
-            MinimumSize = new Size(0, 0),
-        };
-
-        _newPlayer = new TextBox
-        {
-            Dock = DockStyle.Fill,
-            PlaceholderText = _ui.NewPlayerPlaceholder,
-            Margin = new Padding(0),
-            Name = "NewPlayerBox",
-        };
-
-        var addButton = new Button
-        {
-            Text = _ui.Add,
-            AutoSize = true,
-            Name = "AddButton",
-            Margin = new Padding(6, 0, 0, 0),
-        };
-        addButton.Click += (_, _) => AddTypedPlayer();
-
-        var removeButton = new Button
-        {
-            Text = _ui.Remove,
-            AutoSize = true,
-            Name = "RemoveButton",
-            Margin = new Padding(6, 0, 0, 0),
-        };
-        removeButton.Click += (_, _) => RemoveSelectedPlayer();
-
-        var addLabel = new Label
-        {
-            Text = _ui.AddPlayerLabel + ":",
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-            Margin = new Padding(0, 6, 8, 0),
-        };
-
-        var addRow = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 4,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 0, 0),
-        };
-        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        addRow.Controls.Add(addLabel, 0, 0);
-        addRow.Controls.Add(_newPlayer, 1, 0);
-        addRow.Controls.Add(addButton, 2, 0);
-        addRow.Controls.Add(removeButton, 3, 0);
-
-        _ignoredList.Dock = DockStyle.Fill;
-        _ignoredList.IntegralHeight = false;
-        _ignoredList.MinimumSize = new Size(0, 0);
-        addRow.Dock = DockStyle.Fill;
-        addRow.Margin = new Padding(0, 8, 0, 0);
-
-        var playersLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-        };
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
-        playersLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        playersLayout.Controls.Add(_ignoredList, 0, 0);
-        playersLayout.Controls.Add(addRow, 0, 1);
-        playersGroup.Controls.Add(playersLayout);
-
-        _newPlayer.KeyDown += (_, eventArgs) =>
-        {
-            if (eventArgs.KeyCode != Keys.Enter)
-            {
-                return;
-            }
-
-            // Enter adds the typed entry instead of triggering the form's AcceptButton.
-            eventArgs.SuppressKeyPress = true;
-            AddTypedPlayer();
-        };
-
-        // --- Behavior ----------------------------------------------------------------
-        var behaviorGroup = new GroupBox
-        {
-            Text = _ui.BehaviorGroup,
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowOnly,
-            Padding = new Padding(10),
-            Margin = new Padding(0, 10, 0, 0),
-            Name = "BehaviorGroup",
-        };
-
-        _appendPlayer = new CheckBox
-        {
-            Text = _ui.AppendPlayer,
-            AutoSize = true,
-            Checked = _options.AppendPlayerToState,
-            Name = "AppendPlayerCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _usePlayerNameAsActivity = new CheckBox
-        {
-            Text = _ui.UsePlayerNameAsActivity,
-            AutoSize = true,
-            Checked = _options.UsePlayerNameAsActivityName,
-            Name = "UsePlayerNameAsActivityCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _hideIfNoArtwork = new CheckBox
-        {
-            Text = _ui.HideIfNoArtwork,
-            AutoSize = true,
-            Checked = _options.HideIfNoArtwork,
-            Name = "HideIfNoArtworkCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _startWithWindows = new CheckBox
-        {
-            Text = _ui.StartWithWindows,
-            AutoSize = true,
-            Checked = _options.StartWithWindows,
-            Name = "StartWithWindowsCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _showProgress = new CheckBox
-        {
-            Text = _ui.ShowProgress,
-            AutoSize = true,
-            Checked = _options.ShowProgress,
-            Name = "ShowProgressCheck",
-            Margin = new Padding(0, 0, 0, 4),
-        };
-
-        var pauseLabel = new Label
-        {
-            Text = _ui.PauseRefreshLabel,
-            AutoSize = true,
-            Margin = new Padding(0, 8, 10, 0),
-        };
-
-        _pauseRefresh = new NumericUpDown
-        {
-            Minimum = 0,
-            Maximum = 120,
-            Value = Math.Clamp(_options.PauseRefreshSeconds, 0, 120),
-            Width = 70,
-            Anchor = AnchorStyles.Left,
-            Margin = new Padding(0, 6, 0, 0),
-            Name = "PauseRefreshBox",
-        };
-
-        var pauseRow = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false,
-            Margin = new Padding(0),
-            Name = "PauseRow",
-        };
-        pauseRow.Controls.Add(pauseLabel);
-        pauseRow.Controls.Add(_pauseRefresh);
-
-        var behavior = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        behavior.Controls.Add(_appendPlayer);
-        behavior.Controls.Add(_usePlayerNameAsActivity);
-        behavior.Controls.Add(_hideIfNoArtwork);
-        behavior.Controls.Add(_startWithWindows);
-        behavior.Controls.Add(_showProgress);
-        behavior.Controls.Add(pauseRow);
-        behaviorGroup.Controls.Add(behavior);
-
-        // --- Paused media -------------------------------------------------------------
-        var pausedGroup = new GroupBox
-        {
-            Text = _ui.PausedGroup,
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowOnly,
-            Padding = new Padding(10),
-            Margin = new Padding(0, 10, 0, 0),
-            Name = "PausedGroup",
-        };
-
-        _showPausedMedia = new CheckBox
-        {
-            Text = _ui.ShowPausedMedia,
-            AutoSize = true,
-            Checked = _options.ShowPausedMedia,
-            Name = "ShowPausedMediaCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _pauseResetProgress = new CheckBox
-        {
-            Text = _ui.PauseResetProgress,
-            AutoSize = true,
-            Checked = _options.PauseResetProgress,
-            Name = "PauseResetProgressCheck",
-            Margin = new Padding(0, 0, 0, 6),
-        };
-
-        _showPausedIcon = new CheckBox
-        {
-            Text = _ui.ShowPausedIcon,
-            AutoSize = true,
-            Checked = _options.ShowPausedIcon,
-            Name = "ShowPausedIconCheck",
-            Margin = new Padding(0, 0, 0, 10),
-        };
-
-        _pauseAssetKey = CreateAssetKeyBox(
-            _ui.PauseAssetKeyLabel,
-            _options.PauseAssetKey,
-            "PauseAssetKeyBox");
-
-        _appIconAssetKey = CreateAssetKeyBox(
-            _ui.AppIconAssetKeyLabel,
-            _options.AppIconAssetKey,
-            "AppIconAssetKeyBox");
-
-        var pausedLayout = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        pausedLayout.Controls.Add(_showPausedMedia);
-        pausedLayout.Controls.Add(_pauseResetProgress);
-        pausedLayout.Controls.Add(_showPausedIcon);
-        pausedLayout.Controls.Add(_pauseAssetKey);
-        pausedLayout.Controls.Add(_appIconAssetKey);
-        pausedGroup.Controls.Add(pausedLayout);
-
-        var hint = new Label
-        {
-            Text = _ui.Hint,
-            Dock = DockStyle.Fill,
-            Height = 34,
-            ForeColor = SystemColors.GrayText,
-            Margin = new Padding(2, 8, 0, 4),
-            Name = "HintLabel",
-        };
-
-        // --- Buttons -----------------------------------------------------------------
+        // ---- Bottom buttons ----------------------------------------------------
         var buttons = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Bottom,
             FlowDirection = FlowDirection.RightToLeft,
             AutoSize = true,
-            Margin = new Padding(0, 4, 0, 0),
+            Padding = new Padding(14, 8, 14, 14),
+            BackColor = PageBg,
         };
 
         var saveButton = new Button
         {
             Text = _ui.Save,
             AutoSize = true,
-            MinimumSize = new Size(96, 30),
-            Name = "SaveButton",
+            MinimumSize = new Size(104, 34),
+            BackColor = Accent,
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point),
+            Margin = new Padding(0, 0, 0, 0),
         };
+        saveButton.FlatAppearance.BorderSize = 0;
 
         var cancelButton = new Button
         {
             Text = _ui.Cancel,
             AutoSize = true,
-            MinimumSize = new Size(96, 30),
+            MinimumSize = new Size(104, 34),
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
             Margin = new Padding(0, 0, 8, 0),
-            Name = "CancelButton",
         };
 
         saveButton.Click += (_, _) =>
         {
-            if (!SaveSettings())
-            {
-                return;
-            }
-
+            if (!SaveSettings()) return;
             _saved = true;
             DialogResult = DialogResult.OK;
             Close();
@@ -390,23 +142,308 @@ public sealed class SettingsForm : Form
         buttons.Controls.Add(saveButton);
         buttons.Controls.Add(cancelButton);
 
-        root.Controls.Add(playersGroup, 0, 0);
-        root.Controls.Add(behaviorGroup, 0, 1);
-        root.Controls.Add(pausedGroup, 0, 2);
-        root.Controls.Add(hint, 0, 3);
-        root.Controls.Add(buttons, 0, 4);
-        Controls.Add(root);
+        var hint = new Label
+        {
+            Text = _ui.Hint,
+            Dock = DockStyle.Bottom,
+            Height = 30,
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Padding = new Padding(14, 4, 14, 0),
+            BackColor = PageBg,
+        };
+
+        Controls.Add(_tabs);
+        Controls.Add(hint);
+        Controls.Add(buttons);
 
         AcceptButton = saveButton;
         CancelButton = cancelButton;
 
         RefreshIgnoredList();
-        ActiveControl = _ignoredList;
+    }
+
+    private static TabPage MakeTab(string title, Control content)
+    {
+        var page = new TabPage(title)
+        {
+            BackColor = PageBg,
+            Padding = new Padding(12),
+            AutoScroll = true,
+        };
+        var card = new Panel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = CardBg,
+            Padding = new Padding(16),
+        };
+        card.Controls.Add(content);
+        page.Controls.Add(card);
+        return page;
+    }
+
+    private static GroupBox MakeGroup(string title) => new GroupBox
+    {
+        Text = title,
+        Dock = DockStyle.Top,
+        AutoSize = true,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Padding = new Padding(12, 14, 12, 12),
+        Margin = new Padding(0, 0, 0, 12),
+        Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point),
+        BackColor = CardBg,
+    };
+
+    private static CheckBox MakeCheck(string text, bool value, string name) => new CheckBox
+    {
+        Text = text,
+        AutoSize = true,
+        Checked = value,
+        Name = name,
+        Margin = new Padding(0, 0, 0, 8),
+        Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+    };
+
+    private Control BuildPlayersTab()
+    {
+        _ignoredList = new ListBox
+        {
+            Dock = DockStyle.Top,
+            Height = 260,
+            IntegralHeight = false,
+            SelectionMode = SelectionMode.One,
+            Name = "IgnoredList",
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+
+        _newPlayer = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            PlaceholderText = _ui.NewPlayerPlaceholder,
+            Name = "NewPlayerBox",
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+        };
+
+        var addButton = new Button { Text = _ui.Add, AutoSize = true, Name = "AddButton" };
+        var removeButton = new Button { Text = _ui.Remove, AutoSize = true, Name = "RemoveButton" };
+        addButton.Click += (_, _) => AddTypedPlayer();
+        removeButton.Click += (_, _) => RemoveSelectedPlayer();
+
+        var addLabel = new Label
+        {
+            Text = _ui.AddPlayerLabel + ":",
+            AutoSize = true,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 6, 8, 0),
+        };
+
+        var addRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 4,
+            AutoSize = true,
+            Margin = new Padding(0, 10, 0, 0),
+        };
+        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        addRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        addRow.Controls.Add(addLabel, 0, 0);
+        addRow.Controls.Add(_newPlayer, 1, 0);
+        addRow.Controls.Add(addButton, 2, 0);
+        addRow.Controls.Add(removeButton, 3, 0);
+
+        var hint = new Label
+        {
+            Text = "Escribe el nombre del reproductor y pulsa Añadir (o Enter). Para quitarlo, selecciónalo y pulsa Quitar.",
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Margin = new Padding(0, 10, 0, 0),
+            Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
+        };
+
+        _newPlayer.KeyDown += (_, eventArgs) =>
+        {
+            if (eventArgs.KeyCode != Keys.Enter) return;
+            eventArgs.SuppressKeyPress = true;
+            AddTypedPlayer();
+        };
+
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        panel.Controls.Add(_ignoredList);
+        panel.Controls.Add(addRow);
+        panel.Controls.Add(hint);
+        return panel;
+    }
+
+    private Control BuildBehaviorTab()
+    {
+        _appendPlayer = MakeCheck(_ui.AppendPlayer, _options.AppendPlayerToState, "AppendPlayerCheck");
+        _usePlayerNameAsActivity = MakeCheck(_ui.UsePlayerNameAsActivity, _options.UsePlayerNameAsActivityName, "UsePlayerNameAsActivityCheck");
+        _hideIfNoArtwork = MakeCheck(_ui.HideIfNoArtwork, _options.HideIfNoArtwork, "HideIfNoArtworkCheck");
+        _startWithWindows = MakeCheck(_ui.StartWithWindows, _options.StartWithWindows, "StartWithWindowsCheck");
+        _showProgress = MakeCheck(_ui.ShowProgress, _options.ShowProgress, "ShowProgressCheck");
+
+        var pauseLabel = new Label
+        {
+            Text = _ui.PauseRefreshLabel,
+            AutoSize = true,
+            Margin = new Padding(0, 8, 10, 0),
+        };
+        _pauseRefresh = new NumericUpDown
+        {
+            Minimum = 0,
+            Maximum = 120,
+            Value = Math.Clamp(_options.PauseRefreshSeconds, 0, 120),
+            Width = 70,
+            Anchor = AnchorStyles.Left,
+            Name = "PauseRefreshBox",
+        };
+        var pauseRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        pauseRow.Controls.Add(pauseLabel);
+        pauseRow.Controls.Add(_pauseRefresh);
+
+        var group = MakeGroup(_ui.BehaviorGroup);
+        var layout = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        layout.Controls.Add(_appendPlayer);
+        layout.Controls.Add(_usePlayerNameAsActivity);
+        layout.Controls.Add(_hideIfNoArtwork);
+        layout.Controls.Add(_startWithWindows);
+        layout.Controls.Add(_showProgress);
+        layout.Controls.Add(pauseRow);
+        group.Controls.Add(layout);
+
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        panel.Controls.Add(group);
+        return panel;
+    }
+
+    private Control BuildPausedTab()
+    {
+        _showPausedMedia = MakeCheck(_ui.ShowPausedMedia, _options.ShowPausedMedia, "ShowPausedMediaCheck");
+        _pauseResetProgress = MakeCheck(_ui.PauseResetProgress, _options.PauseResetProgress, "PauseResetProgressCheck");
+        _showPausedIcon = MakeCheck(_ui.ShowPausedIcon, _options.ShowPausedIcon, "ShowPausedIconCheck");
+
+        _pauseAssetKey = CreateAssetKeyBox(_ui.PauseAssetKeyLabel, _options.PauseAssetKey, "PauseAssetKeyBox");
+        _appIconAssetKey = CreateAssetKeyBox(_ui.AppIconAssetKeyLabel, _options.AppIconAssetKey, "AppIconAssetKeyBox");
+
+        var group = MakeGroup(_ui.PausedGroup);
+        var layout = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        layout.Controls.Add(_showPausedMedia);
+        layout.Controls.Add(_pauseResetProgress);
+        layout.Controls.Add(_showPausedIcon);
+        layout.Controls.Add(_pauseAssetKey);
+        layout.Controls.Add(_appIconAssetKey);
+        group.Controls.Add(layout);
+
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        panel.Controls.Add(group);
+        return panel;
+    }
+
+    private Control BuildPresenceTab()
+    {
+        _showOverlay = MakeCheck("Mostrar overlay flotante (now playing)", _options.ShowOverlay, "ShowOverlayCheck");
+        _gamingMode = MakeCheck("Pausar presencia en juegos a pantalla completa", _options.GamingMode, "GamingModeCheck");
+        _showTrackChangeToast = MakeCheck("Mostrar toast al cambiar de pista", _options.ShowTrackChangeToast, "ShowTrackChangeToastCheck");
+        _globalHotkeys = MakeCheck("Atajos globales (Ctrl+Alt+P / S)", _options.GlobalHotkeys, "GlobalHotkeysCheck");
+        _listeningHistory = MakeCheck("Guardar historial de escucha (history.jsonl)", _options.ListeningHistory, "ListeningHistoryCheck");
+
+        _detailsTemplateBox = new TextBox { Text = _options.DetailsTemplate, Dock = DockStyle.Top, Name = "DetailsTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+        _stateTemplateBox = new TextBox { Text = _options.StateTemplate, Dock = DockStyle.Top, Name = "StateTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+        _largeTextTemplateBox = new TextBox { Text = _options.LargeTextTemplate, Dock = DockStyle.Top, Name = "LargeTextTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+
+        var group = MakeGroup("Funciones nuevas");
+        var layout = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        layout.Controls.Add(_showOverlay);
+        layout.Controls.Add(_gamingMode);
+        layout.Controls.Add(_showTrackChangeToast);
+        layout.Controls.Add(_globalHotkeys);
+        layout.Controls.Add(_listeningHistory);
+
+        layout.Controls.Add(new Label { Text = "Plantilla Details (usa {title}, {artist}, {album}, {player}):", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        layout.Controls.Add(_detailsTemplateBox);
+        layout.Controls.Add(new Label { Text = "Plantilla State:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        layout.Controls.Add(_stateTemplateBox);
+        layout.Controls.Add(new Label { Text = "Plantilla Large text:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        layout.Controls.Add(_largeTextTemplateBox);
+
+        group.Controls.Add(layout);
+
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        panel.Controls.Add(group);
+        return panel;
+    }
+
+    private Control BuildLastFmTab()
+    {
+        _lastFmApiKeyBox = new TextBox { Text = _options.LastFmApiKey, Dock = DockStyle.Top, Name = "LastFmApiKeyBox", PlaceholderText = "API key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+        _lastFmUserBox = new TextBox { Text = _options.LastFmUser, Dock = DockStyle.Top, Name = "LastFmUserBox", PlaceholderText = "Usuario", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+        _lastFmSessionKeyBox = new TextBox { Text = _options.LastFmSessionKey, Dock = DockStyle.Top, Name = "LastFmSessionKeyBox", PlaceholderText = "Session key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
+
+        var group = MakeGroup("Last.fm (scrobbling)");
+        var layout = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        layout.Controls.Add(new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
+        layout.Controls.Add(_lastFmApiKeyBox);
+        layout.Controls.Add(new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        layout.Controls.Add(_lastFmUserBox);
+        layout.Controls.Add(new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        layout.Controls.Add(_lastFmSessionKeyBox);
+        layout.Controls.Add(new Label
+        {
+            Text = "Deja vacío para desactivar el scrobbling. Necesitas una cuenta Last.fm y una API key.",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Margin = new Padding(0, 10, 0, 0),
+            Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
+        });
+        group.Controls.Add(layout);
+
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        panel.Controls.Add(group);
+        return panel;
     }
 
     protected override void OnFormClosing(FormClosingEventArgs eventArgs)
     {
-        // Closing with X (or Alt+F4) also persists the current values, as requested.
         if (!_saved && !_cancelled && eventArgs.CloseReason == CloseReason.UserClosing)
         {
             if (!SaveSettings())
@@ -414,11 +451,9 @@ public sealed class SettingsForm : Form
                 eventArgs.Cancel = true;
                 return;
             }
-
             _saved = true;
             DialogResult = DialogResult.OK;
         }
-
         base.OnFormClosing(eventArgs);
     }
 
@@ -429,10 +464,10 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             AutoSize = true,
             ColumnCount = 2,
-            Margin = new Padding(0, 0, 0, 6),
+            Margin = new Padding(0, 0, 0, 8),
             Name = name + "Row",
         };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250f));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230f));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
         panel.Controls.Add(new Label
         {
@@ -440,6 +475,7 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Anchor = AnchorStyles.Left,
             Margin = new Padding(0, 5, 8, 0),
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
         }, 0, 0);
         panel.Controls.Add(new TextBox
         {
@@ -447,6 +483,7 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Fill,
             Margin = new Padding(0, 2, 0, 2),
             Name = name,
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
         }, 1, 0);
         return panel;
     }
@@ -455,36 +492,20 @@ public sealed class SettingsForm : Form
     {
         foreach (Control child in row.Controls)
         {
-            if (child is TextBox box)
-            {
-                return box.Text;
-            }
+            if (child is TextBox box) return box.Text;
         }
-
         return "";
     }
 
     private void AddTypedPlayer()
     {
         var value = _newPlayer.Text.Trim();
-
-        if (value.Length == 0)
-        {
-            _newPlayer.Focus();
-            return;
-        }
-
+        if (value.Length == 0) { _newPlayer.Focus(); return; }
         if (!AddPlayer(value))
         {
-            MessageBox.Show(
-                this,
-                string.Format(_ui.AlreadyInList, value),
-                _ui.AppName,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            MessageBox.Show(this, string.Format(_ui.AlreadyInList, value), _ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-
         _newPlayer.Clear();
         _newPlayer.Focus();
     }
@@ -492,10 +513,7 @@ public sealed class SettingsForm : Form
     private bool AddPlayer(string value)
     {
         if (_ignored.Any(existing => string.Equals(existing, value, StringComparison.OrdinalIgnoreCase)))
-        {
             return false;
-        }
-
         _ignored.Add(value);
         RefreshIgnoredList(value);
         return true;
@@ -503,11 +521,7 @@ public sealed class SettingsForm : Form
 
     private void RemoveSelectedPlayer()
     {
-        if (_ignoredList.SelectedItem is not string selected)
-        {
-            return;
-        }
-
+        if (_ignoredList.SelectedItem is not string selected) return;
         _ignored.RemoveAll(value => string.Equals(value, selected, StringComparison.OrdinalIgnoreCase));
         RefreshIgnoredList();
     }
@@ -515,35 +529,20 @@ public sealed class SettingsForm : Form
     private void RefreshIgnoredList(string? select = null)
     {
         _ignoredList.BeginUpdate();
-
         try
         {
             _ignoredList.Items.Clear();
-
             foreach (var value in _ignored.OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase))
-            {
                 _ignoredList.Items.Add(value);
-            }
         }
-        finally
-        {
-            _ignoredList.EndUpdate();
-        }
-
-        if (!string.IsNullOrEmpty(select))
-        {
-            _ignoredList.SelectedItem = select;
-        }
+        finally { _ignoredList.EndUpdate(); }
+        if (!string.IsNullOrEmpty(select)) _ignoredList.SelectedItem = select;
     }
 
     private bool SaveSettings()
     {
         var pending = _newPlayer.Text.Trim();
-        if (pending.Length > 0)
-        {
-            AddPlayer(pending);
-            _newPlayer.Clear();
-        }
+        if (pending.Length > 0) { AddPlayer(pending); _newPlayer.Clear(); }
 
         _options.IgnoredPlayers = _ignored.ToList();
         _options.AppendPlayerToState = _appendPlayer.Checked;
@@ -557,20 +556,23 @@ public sealed class SettingsForm : Form
         _options.ShowPausedIcon = _showPausedIcon.Checked;
         _options.PauseAssetKey = AssetKeyText(_pauseAssetKey);
         _options.AppIconAssetKey = AssetKeyText(_appIconAssetKey);
+        _options.ShowOverlay = _showOverlay.Checked;
+        _options.GamingMode = _gamingMode.Checked;
+        _options.ShowTrackChangeToast = _showTrackChangeToast.Checked;
+        _options.GlobalHotkeys = _globalHotkeys.Checked;
+        _options.ListeningHistory = _listeningHistory.Checked;
+        _options.DetailsTemplate = _detailsTemplateBox.Text.Trim();
+        _options.StateTemplate = _stateTemplateBox.Text.Trim();
+        _options.LargeTextTemplate = _largeTextTemplateBox.Text.Trim();
+        _options.LastFmApiKey = _lastFmApiKeyBox.Text.Trim();
+        _options.LastFmUser = _lastFmUserBox.Text.Trim();
+        _options.LastFmSessionKey = _lastFmSessionKeyBox.Text.Trim();
         _options.Normalize();
 
-        try
-        {
-            _options.Save();
-        }
+        try { _options.Save(); }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                this,
-                string.Format(_ui.SaveFailed, ex.Message),
-                _ui.AppName,
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            MessageBox.Show(this, string.Format(_ui.SaveFailed, ex.Message), _ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
 

@@ -27,18 +27,18 @@ public static class DiagnosticsRunner
         Console.WriteLine(new string('=', 88));
         Console.WriteLine($"  Configuration    : {options.ConfigPath}");
         Console.WriteLine($"  Covers            : {options.Artwork.ResolvedCacheDirectory}");
-        Console.WriteLine($"  Registro         : {log.FilePath}");
-        Console.WriteLine($"  Sondeo           : cada {options.PollIntervalMs} ms");
-        Console.WriteLine($"  Tipo de actividad: {options.ActivityType}");
+        Console.WriteLine($"  Log              : {log.FilePath}");
+        Console.WriteLine($"  Polling          : every {options.PollIntervalMs} ms");
+        Console.WriteLine($"  Activity type    : {options.ActivityType}");
         Console.WriteLine($"  Portada          : {DescribeArtworkMode(options)}");
 
         if (cli.DryRun)
         {
-            Console.WriteLine("  Discord          : DESACTIVADO (--dry-run)");
+            Console.WriteLine("  Discord          : DISABLED (--dry-run)");
         }
         else if (string.IsNullOrWhiteSpace(options.DiscordClientId))
         {
-            Console.WriteLine("  Discord          : sin configurar (solo se imprime el JSON)");
+            Console.WriteLine("  Discord          : not configured (JSON only)");
         }
         else
         {
@@ -87,7 +87,7 @@ public static class DiagnosticsRunner
             if (snapshot is null)
             {
                 Console.WriteLine("  No SMTC session is active right now.");
-                Console.WriteLine("  Abre un reproductor y dale a play (foobar2000 + Gatefold, Spotify, etc.).");
+                Console.WriteLine("  Open a player and press play (foobar2000 + Gatefold, Spotify, etc.).");
             }
             else
             {
@@ -96,20 +96,20 @@ public static class DiagnosticsRunner
                                   (string.IsNullOrWhiteSpace(snapshot.PlayerExecutable) ? "" : $" · {snapshot.PlayerExecutable}"));
                 Console.WriteLine($"  Status      : {snapshot.Status}" + (snapshot.IsCurrentSession ? " (current Windows session)" : ""));
                 Console.WriteLine($"  Title       : {Value(snapshot.Title)}");
-                Console.WriteLine($"  Artista     : {Value(snapshot.Artist)}");
-                Console.WriteLine($"  Álbum       : {Value(snapshot.Album)}");
-                Console.WriteLine($"  Tiempo      : {FormatTime(snapshot.Position)} / {FormatTime(snapshot.Duration)}");
+                Console.WriteLine($"  Artist      : {Value(snapshot.Artist)}");
+                Console.WriteLine($"  Album       : {Value(snapshot.Album)}");
+                Console.WriteLine($"  Time        : {FormatTime(snapshot.Position)} / {FormatTime(snapshot.Duration)}");
                 Console.WriteLine($"  Cover       : {(snapshot.Artwork is null
                     ? "no cover (the app icon will be used on Discord)"
                     : $"{snapshot.Artwork.ByteCount / 1024.0:0.0} KB {snapshot.Artwork.ContentType} → {snapshot.Artwork.FilePath}")}");
                 Console.WriteLine($"  Discord cover: {snapshot.PublicArtworkUrl ?? "(no public URL; app icon)"}");
-                Console.WriteLine($"  Formato     : start = ahora - posición (ms) · end = ahora + (duración - posición)");
+                Console.WriteLine($"  Format      : start = now - position (ms) · end = now + (duration - position)");
             }
 
-            Console.WriteLine($"  Sesiones    : {sessions.Count} detectada(s) por Windows");
+            Console.WriteLine($"  Sessions    : {sessions.Count} detected by Windows");
             foreach (var session in sessions.OrderByDescending(s => s.Status))
             {
-                Console.WriteLine($"      • {Pad(session.AppUserModelId.Length == 0 ? "(sin AUMID)" : session.AppUserModelId, 34)} " +
+                Console.WriteLine($"      • {Pad(session.AppUserModelId.Length == 0 ? "(no AUMID)" : session.AppUserModelId, 34)} " +
                                   $"{Pad(session.Status.ToString(), 8)} {session.TrackSummary}");
             }
 
@@ -153,22 +153,22 @@ public static class DiagnosticsRunner
         }
 
         Console.WriteLine();
-        Console.WriteLine("Cerrando y limpiando la presencia de Discord…");
+        Console.WriteLine("Closing and clearing Discord presence…");
         await engine.StopAsync().ConfigureAwait(false);
-        Console.WriteLine("Listo.");
+        Console.WriteLine("Done.");
         return 0;
     }
 
     private static async Task<int> RunListAsync(AppOptions options, Log log)
     {
-        Console.WriteLine("Universal Presence — sesiones SMTC que Windows expone ahora mismo");
+        Console.WriteLine("Universal Presence — SMTC sessions Windows exposes right now");
         Console.WriteLine(new string('=', 88));
 
         using var monitor = new SmtcMonitor(options, log);
 
         if (!await monitor.EnsureStartedAsync(CancellationToken.None).ConfigureAwait(false))
         {
-            Console.WriteLine("No se pudo obtener el gestor SMTC de Windows.");
+            Console.WriteLine("Could not get the Windows SMTC manager.");
             return 2;
         }
 
@@ -177,7 +177,7 @@ public static class DiagnosticsRunner
 
         if (sessions.Count == 0)
         {
-            Console.WriteLine("No hay ninguna sesión SMTC. Abre un reproductor y dale a reproducir.");
+            Console.WriteLine("No SMTC session. Open a player and press play.");
             return 0;
         }
 
@@ -187,12 +187,12 @@ public static class DiagnosticsRunner
             Console.WriteLine($"  AUMID        : {Value(session.AppUserModelId)}");
             Console.WriteLine($"  Reproductor  : {session.PlayerName} (origen: {session.PlayerNameSource})");
             Console.WriteLine($"  Ejecutable   : {Value(session.PlayerExecutable)}");
-            Console.WriteLine($"  Estado       : {session.Status}" + (session.IsCurrentSession ? " · sesión actual" : ""));
-            Console.WriteLine($"  Título       : {Value(session.Title)}");
-            Console.WriteLine($"  Artista      : {Value(session.Artist)}");
-            Console.WriteLine($"  Álbum        : {Value(session.Album)}");
-            Console.WriteLine($"  Tiempo       : {FormatTime(session.Position)} / {FormatTime(session.Duration)}");
-            Console.WriteLine($"  Carátula     : {(session.Artwork is null ? "sin carátula" : $"{session.Artwork.ByteCount / 1024.0:0.0} KB {session.Artwork.ContentType}")}");
+            Console.WriteLine($"  Status       : {session.Status}" + (session.IsCurrentSession ? " · current session" : ""));
+            Console.WriteLine($"  Title        : {Value(session.Title)}");
+            Console.WriteLine($"  Artist       : {Value(session.Artist)}");
+            Console.WriteLine($"  Album        : {Value(session.Album)}");
+            Console.WriteLine($"  Time         : {FormatTime(session.Position)} / {FormatTime(session.Duration)}");
+            Console.WriteLine($"  Cover        : {(session.Artwork is null ? "no cover" : $"{session.Artwork.ByteCount / 1024.0:0.0} KB {session.Artwork.ContentType}")}");
         }
 
         Console.WriteLine();

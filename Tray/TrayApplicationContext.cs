@@ -31,6 +31,10 @@ public sealed class TrayApplicationContext : ApplicationContext
     private TrayVisualState _visualState = TrayVisualState.Idle;
     private bool _closing;
     private bool _settingsOpen;
+    private string _lastToastTrack = "";
+    private HotkeyWindow? _hotkeys;
+    private OverlayForm? _overlay;
+    private System.Windows.Forms.Timer? _cmdTimer;
 
     public TrayApplicationContext(AppOptions options, Log log, bool openSettings = false)
     {
@@ -109,6 +113,25 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         WindowsAutostart.Apply(_options.StartWithWindows);
 
+        if (_options.GlobalHotkeys)
+        {
+            try
+            {
+                _hotkeys = new HotkeyWindow(id =>
+                {
+                    if (id == 1) TogglePause();
+                    else if (id == 2) _dispatcher.BeginInvoke(new Action(OpenSettings));
+                });
+                // Ctrl+Alt+P = pause/resume, Ctrl+Alt+S = settings
+                _hotkeys.Register(1, HotkeyWindow.MOD_CONTROL | HotkeyWindow.MOD_ALT, (uint)Keys.P);
+                _hotkeys.Register(2, HotkeyWindow.MOD_CONTROL | HotkeyWindow.MOD_ALT, (uint)Keys.S);
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"Could not register global hotkeys: {ex.Message}");
+            }
+        }
+
         if (!_engine.DiscordConfigured)
         {
             _notifyIcon.ShowBalloonTip(
@@ -131,6 +154,26 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
         _updateTimer.Start();
 
+        _cmdTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _cmdTimer.Tick += (_, _) => PollCommand();
+        _cmdTimer.Start();
+
+        if (!_options.FirstRunCompleted)
+        {
+            try
+            {
+                using var fr = new FirstRunForm(_options);
+                if (fr.ShowDialog() == DialogResult.OK) fr.Apply();
+            }
+            catch (Exception ex) { _log.Warn($"First-run wizard failed: {ex.Message}"); }
+        }
+
+        if (_options.ShowOverlay)
+        {
+            try { _overlay = new OverlayForm(_engine); _overlay.Show(); }
+            catch (Exception ex) { _log.Warn($"Could not open the overlay: {ex.Message}"); }
+        }
+
         if (openSettings)
         {
             _dispatcher.BeginInvoke(new Action(OpenSettings));
@@ -149,7 +192,12 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
-            using var form = new SettingsForm(_options, () => _engine.ApplySettings());
+            using var form = new SettingsForm(_options, () =>
+            {
+                _engine.ApplySettings();
+                ApplyHotkeys();
+                ApplyOverlay();
+            });
             form.ShowDialog();
             UpdateUi();
         }
@@ -174,6 +222,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             return;
         }
+
+        // Toast al cambiar de pista.
+        try
+        {
+            var snap = _engine.LastSnapshot;
+            if (_options.ShowTrackChangeToast && snap is { IsActive: true })
+            {
+                var key = $"{snap.Title}|{snap.Artist}";
+                if (!string.Equals(key, _lastToastTrack, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(snap.Title))
+                {
+                    _lastToastTrack = key;
+                    var text = string.IsNullOrWhiteSpace(snap.Artist) ? snap.Title : $"{snap.Title} — {snap.Artist}";
+                    _notifyIcon.ShowBalloonTip(4_000, _ui.AppName, text, ToolTipIcon.Info);
+                }
+            }
+        }
+        catch { }
 
         try
         {
@@ -212,10 +277,77 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    private void PollCommand()
+    {
+        try
+        {
+            var p = Path.Combine(AppOptions.LocalDataDirectory, "command.txt");
+            if (!File.Exists(p)) return;
+            var cmd = File.ReadAllText(p).Trim().ToLowerInvariant();
+            File.Delete(p);
+            switch (cmd)
+            {
+                case "pause": _engine.SetPaused(true); break;
+                case "resume": _engine.SetPaused(false); break;
+                case "toggle": TogglePause(); break;
+                case "settings": OpenSettings(); break;
+                case "exit": BeginExit(); break;
+            }
+            UpdateUi();
+        }
+        catch { }
+    }
+
     private void TogglePause()
     {
         _engine.SetPaused(!_engine.Paused);
         UpdateUi();
+    }
+
+    private void ApplyHotkeys()
+    {
+        try
+        {
+            _hotkeys?.Dispose();
+            _hotkeys = null;
+            if (_options.GlobalHotkeys)
+            {
+                var hw = new HotkeyWindow(id =>
+                {
+                    if (id == 1) TogglePause();
+                    else if (id == 2) _dispatcher.BeginInvoke(new Action(OpenSettings));
+                });
+                hw.Register(1, HotkeyWindow.MOD_CONTROL | HotkeyWindow.MOD_ALT, (uint)Keys.P);
+                hw.Register(2, HotkeyWindow.MOD_CONTROL | HotkeyWindow.MOD_ALT, (uint)Keys.S);
+                _hotkeys = hw;
+            }
+        }
+        catch (Exception ex) { _log.Warn($"Could not register global hotkeys: {ex.Message}"); }
+    }
+
+    private void ApplyOverlay()
+    {
+        try
+        {
+            if (_options.ShowOverlay)
+            {
+                if (_overlay == null || _overlay.IsDisposed)
+                {
+                    _overlay = new OverlayForm(_engine);
+                    _overlay.Show();
+                }
+            }
+            else
+            {
+                if (_overlay != null && !_overlay.IsDisposed)
+                {
+                    _overlay.Close();
+                    _overlay.Dispose();
+                }
+                _overlay = null;
+            }
+        }
+        catch (Exception ex) { _log.Warn($"Could not open the overlay: {ex.Message}"); }
     }
 
     private void SetAutoUpdate(bool enabled)
@@ -228,7 +360,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _log.Warn($"No se pudo guardar la preferencia de actualizaciones: {ex.Message}");
+            _log.Warn($"Could not save the update preference: {ex.Message}");
         }
     }
 
@@ -361,7 +493,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _log.Warn($"Error al cerrar la presencia: {ex.Message}");
+            _log.Warn($"Error while closing presence: {ex.Message}");
         }
 
         try
@@ -380,7 +512,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             if (!File.Exists(path) && !Directory.Exists(path))
             {
-                _log.Warn($"No existe la ruta: {path}");
+                _log.Warn($"Path does not exist: {path}");
                 return;
             }
 
@@ -388,7 +520,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _log.Warn($"No se pudo abrir '{path}': {ex.Message}");
+            _log.Warn($"Could not open '{path}': {ex.Message}");
         }
     }
 
@@ -409,6 +541,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _closing = true;
             _updateTimer.Stop();
             _updateTimer.Dispose();
+            _cmdTimer?.Stop();
+            _cmdTimer?.Dispose();
 
             _engine.Updated -= OnEngineUpdated;
             _engine.Dispose();
@@ -423,6 +557,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             _updater.Dispose();
             _notifyIcon.Dispose();
             _menu.Dispose();
+            _hotkeys?.Dispose();
+            _overlay?.Dispose();
             _dispatcher.Dispose();
         }
 

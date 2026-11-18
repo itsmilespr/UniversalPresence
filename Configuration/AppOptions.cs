@@ -154,6 +154,57 @@ public sealed class AppOptions
     /// <summary>Playing | Listening | Watching | Competing.</summary>
     public string ActivityType { get; set; } = "Listening";
 
+    /// <summary>
+    /// Plantilla del campo Details (línea 1). Marcadores: {title}, {artist}, {album}, {player}, {status}.
+    /// Vacío = comportamiento por defecto (título).
+    /// </summary>
+    public string DetailsTemplate { get; set; } = "";
+
+    /// <summary>
+    /// Plantilla del campo State (línea 2). Marcadores: {title}, {artist}, {album}, {player}, {status}.
+    /// Vacío = comportamiento por defecto (artista).
+    /// </summary>
+    public string StateTemplate { get; set; } = "";
+
+    /// <summary>
+    /// Plantilla del tooltip de la portada (large text). Marcadores: {title}, {artist}, {album}, {player}.
+    /// Vacío = comportamiento por defecto (álbum).
+    /// </summary>
+    public string LargeTextTemplate { get; set; } = "";
+
+    /// <summary>Muestra un toast de Windows al cambiar de pista.</summary>
+    public bool ShowTrackChangeToast { get; set; } = true;
+
+    /// <summary>Pausa la presencia automáticamente cuando hay un juego a pantalla completa en primer plano.</summary>
+    public bool GamingMode { get; set; }
+
+    /// <summary>Guarda un historial local de lo escuchado (JSON Lines).</summary>
+    public bool ListeningHistory { get; set; } = true;
+
+    /// <summary>Nombre del perfil activo (configuración guardada en profiles/).</summary>
+    public string ActiveProfile { get; set; } = "default";
+
+    /// <summary>Se ha completado el asistente de primera ejecución.</summary>
+    public bool FirstRunCompleted { get; set; }
+
+    /// <summary>API key de Last.fm para scrobbling (vacío = desactivado).</summary>
+    public string LastFmApiKey { get; set; } = "";
+
+    /// <summary>Usuario de Last.fm para scrobbling (vacío = desactivado).</summary>
+    public string LastFmUser { get; set; } = "";
+
+    /// <summary>Token de sesión de Last.fm (se obtiene autorizando una vez).</summary>
+    public string LastFmSessionKey { get; set; } = "";
+
+    /// <summary>Muestra la ventana flotante "now playing".</summary>
+    public bool ShowOverlay { get; set; }
+
+    /// <summary>Atajos de teclado globales activos.</summary>
+    public bool GlobalHotkeys { get; set; } = true;
+
+    /// <summary>Rollback automático si la app no arranca correctamente.</summary>
+    public bool AutoRollback { get; set; } = true;
+
     /// <summary>Asset key for the small player badge (upload it in the Discord Developer Portal). Empty = no badge.</summary>
     public string PlayerAssetKey { get; set; } = "";
 
@@ -192,7 +243,9 @@ public sealed class AppOptions
 
     public static AppOptions Load(CliOptions cli)
     {
-        var path = cli.ConfigPath ?? DefaultConfigPath;
+        // Modo portable: si existe config.json junto al .exe, se usa (sin tocar %APPDATA%).
+        var portablePath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        var path = cli.ConfigPath ?? (File.Exists(portablePath) ? portablePath : DefaultConfigPath);
         AppOptions options;
 
         try
@@ -215,7 +268,7 @@ public sealed class AppOptions
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"No se pudo leer la configuración ({path}): {ex.Message}. Se usan los valores por defecto.");
+            Console.Error.WriteLine($"Could not read the configuration ({path}): {ex.Message}. Using defaults.");
             options = new AppOptions();
         }
 

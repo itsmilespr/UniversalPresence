@@ -71,26 +71,40 @@ public sealed class ActivityFactory
         //   SmallImage = Icono del reproductor (si está disponible)
         //   SmallText = Nombre del reproductor + contador de repeticiones
 
-        var state = FirstNonEmpty(artist, album, player);
+        var detailsValue = !string.IsNullOrWhiteSpace(_options.DetailsTemplate)
+            ? ApplyTemplate(_options.DetailsTemplate, snapshot, status, text)
+            : FirstNonEmpty(snapshot.Title, artist, player, text.Playing);
+
+        var stateValue = !string.IsNullOrWhiteSpace(_options.StateTemplate)
+            ? ApplyTemplate(_options.StateTemplate, snapshot, status, text)
+            : FirstNonEmpty(artist, album, player);
 
         if (_options.AppendPlayerToState
             && !string.IsNullOrWhiteSpace(player)
             && !string.Equals(player, artist, StringComparison.OrdinalIgnoreCase))
         {
-            state = string.IsNullOrWhiteSpace(state) ? player : $"{state} · {player}";
+            stateValue = string.IsNullOrWhiteSpace(stateValue) ? player : $"{stateValue} · {player}";
         }
 
         // Conteo de reproducciones consecutivas (solo a partir de la 2ª).
         if (snapshot.PlayCount >= 2)
         {
             var counter = $"×{snapshot.PlayCount}";
-            state = string.IsNullOrWhiteSpace(state) ? counter : $"{state} · {counter}";
+            stateValue = string.IsNullOrWhiteSpace(stateValue) ? counter : $"{stateValue} · {counter}";
         }
 
         // Si hay álbum, mostrarlo con prefijo "En" para que quede más bonito en el tooltip
-        var largeText = !string.IsNullOrWhiteSpace(album) && _options.ShowAlbum
-            ? string.Format(text.InAlbum, album)
-            : artist;
+        string largeText;
+        if (!string.IsNullOrWhiteSpace(_options.LargeTextTemplate))
+        {
+            largeText = ApplyTemplate(_options.LargeTextTemplate, snapshot, status, text);
+        }
+        else
+        {
+            largeText = !string.IsNullOrWhiteSpace(album) && _options.ShowAlbum
+                ? string.Format(text.InAlbum, album)
+                : artist;
+        }
 
         var smallText = ResolveSmallText(status, player, text);
 
@@ -114,8 +128,8 @@ public sealed class ActivityFactory
             // 1 = STATE: the member list shows "Listening to <artist>" instead of the
             // application name. 0 = NAME, 2 = DETAILS.
             StatusDisplayType = 1,
-            Details = Clip(FirstNonEmpty(snapshot.Title, artist, player, text.Playing)),
-            State = ClipNullable(state),
+            Details = Clip(detailsValue),
+            State = ClipNullable(stateValue),
             Timestamps = BuildTimestamps(snapshot, status),
             Buttons = new List<DiscordButton>
             {
@@ -259,6 +273,17 @@ public sealed class ActivityFactory
 
         // 3. Uploaded asset key; empty lets Discord fall back to the application icon.
         return NullIfEmpty(artwork.FallbackAssetKey);
+    }
+
+    private string ApplyTemplate(string template, MediaSnapshot snapshot, PlaybackState status, PresenceText text)
+    {
+        var result = template;
+        result = result.Replace("{title}", snapshot.Title ?? "", StringComparison.Ordinal);
+        result = result.Replace("{artist}", snapshot.Artist ?? "", StringComparison.Ordinal);
+        result = result.Replace("{album}", snapshot.Album ?? "", StringComparison.Ordinal);
+        result = result.Replace("{player}", snapshot.PlayerName ?? "", StringComparison.Ordinal);
+        result = result.Replace("{status}", status.ToString(), StringComparison.Ordinal);
+        return result;
     }
 
     private static int MapType(string? value) => value?.Trim().ToLowerInvariant() switch

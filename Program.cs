@@ -1,4 +1,5 @@
 using UniversalPresence.Cli;
+using System.Diagnostics;
 using UniversalPresence.Configuration;
 using UniversalPresence.Diagnostics;
 using UniversalPresence.Infrastructure;
@@ -12,6 +13,45 @@ internal static class Program
     private static int Main(string[] args)
     {
         var cli = CliOptions.Parse(args);
+
+        // Rollback automático: si la versión anterior no arrancó bien, lanzar el .bak.
+        if (!cli.ConsoleMode && !cli.ShowHelp)
+        {
+            try
+            {
+                var exe = Environment.ProcessPath;
+                if (!string.IsNullOrWhiteSpace(exe))
+                {
+                    var bak = exe + ".bak";
+                    var dir = AppOptions.LocalDataDirectory;
+                    var flag = Path.Combine(dir, "started.flag");
+                    if (File.Exists(bak) && !File.Exists(flag))
+                    {
+                        Process.Start(new ProcessStartInfo(bak) { UseShellExecute = true });
+                        return 0;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        if (!string.IsNullOrWhiteSpace(cli.SendCommand))
+        {
+            try
+            {
+                var dir = AppOptions.LocalDataDirectory;
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "command.txt"), cli.SendCommand.Trim().ToLowerInvariant());
+                Console.WriteLine($"Command sent: {cli.SendCommand}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Could not send the command: {ex.Message}");
+                return 1;
+            }
+
+            return 0;
+        }
 
         if (cli.ConsoleMode || cli.ShowHelp)
         {
@@ -54,6 +94,14 @@ internal static class Program
 
     private static int RunTray(AppOptions options, Log log, CliOptions cli)
     {
+        try
+        {
+            var dir = AppOptions.LocalDataDirectory;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "started.flag"), DateTime.UtcNow.ToString("O"));
+        }
+        catch { }
+
         using var instance = new SingleInstance(@"Local\UniversalPresence.Tray");
 
         if (!instance.IsFirst)

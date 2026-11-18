@@ -305,8 +305,8 @@ public sealed class UpdateService : IDisposable
 
     public void Dispose()
     {
-        _cts.Cancel();
-        _cts.Dispose();
+        try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+        try { _cts.Dispose(); } catch (ObjectDisposedException) { }
     }
 
     private const string ApplyScript = """

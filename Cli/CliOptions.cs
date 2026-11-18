@@ -16,6 +16,7 @@ public sealed class CliOptions
     public bool Verbose { get; private set; }
     public bool Paused { get; private set; }
     public bool Settings { get; private set; }
+    public string? SendCommand { get; private set; }
     public bool ShowHelp { get; private set; }
     public string? ClientId { get; private set; }
     public string? ConfigPath { get; private set; }
@@ -53,6 +54,9 @@ public sealed class CliOptions
                 case "--settings":
                     cli.Settings = true;
                     break;
+                case "--send":
+                    cli.SendCommand = NextValue(args, ref i);
+                    break;
                 case "--client-id":
                     cli.ClientId = NextValue(args, ref i);
                     break;
@@ -71,7 +75,7 @@ public sealed class CliOptions
                 default:
                     if (arg.Length > 0)
                     {
-                        Console.Error.WriteLine($"Argumento desconocido: {arg}");
+                        Console.Error.WriteLine($"Unknown argument: {arg}");
                     }
 
                     break;
@@ -101,23 +105,23 @@ public sealed class CliOptions
     {
         Console.WriteLine(
             """
-            Universal Presence — Rich Presence universal para Windows (SMTC), sin listas blancas.
+            Universal Presence — Universal Rich Presence for Windows (SMTC), no whitelists.
 
-            USO
-              UniversalPresence.exe                 Icono en la bandeja del sistema (sin ventana).
-              UniversalPresence.exe --test          Modo de prueba: imprime todo lo que detecta SMTC.
-              UniversalPresence.exe --list           Vuelca las sesiones SMTC y termina.
+            USAGE
+              UniversalPresence.exe                 System tray icon only (no window).
+              UniversalPresence.exe --test          Test mode: prints everything SMTC detects.
+              UniversalPresence.exe --list           Dumps SMTC sessions and exits.
               UniversalPresence.exe --settings       Starts in the tray and opens the settings.
               UniversalPresence.exe --test --dry-run --seconds 20
-                                                     Prueba sin Discord, terminando sola a los 20 s.
+                                                     Test without Discord, exits after 20 s.
 
-            OPCIONES
+            OPTIONS
               --client-id <id>   Discord application id (overrides the configuration).
-              --config <ruta>    Ruta alternativa a config.json.
-              --paused           Arranca pausado (sin publicar en Discord).
-              --verbose          Registro detallado.
+              --config <path>    Alternative path to config.json.
+              --paused           Start paused (does not publish to Discord).
+              --verbose          Verbose logging.
               --seconds <n>      In --test/--console mode, exits after n seconds.
-              -h, --help         Esta ayuda.
+              -h, --help         This help.
 
             The configuration file is created only at:
               %APPDATA%\UniversalPresence\config.json

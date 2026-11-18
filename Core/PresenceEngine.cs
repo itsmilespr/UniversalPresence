@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Globalization;
 using UniversalPresence.Configuration;
 using UniversalPresence.Discord;
@@ -32,6 +33,12 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private readonly DiscordPresenceService _discord;
     private readonly ActivityFactory _factory;
     private readonly ArtworkLookupService _artworkLookup;
+    private readonly ListeningHistoryService _history = new();
+    private readonly LastFmService _lastfm;
+    private string _prevScrobbleTitle = "";
+    private string _prevScrobbleArtist = "";
+    private string _prevScrobbleAlbum = "";
+    private DateTimeOffset _prevScrobbleAt = DateTimeOffset.MinValue;
     private readonly ArtworkUploadService _artworkUpload;
     private readonly DiscordTokenService _discordTokens;
     private readonly ExternalAssetsService _externalAssets;
@@ -46,6 +53,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private PublishRequest? _pendingPublish;
     private CancellationTokenSource? _inflightPublish;
     private volatile bool _paused;
+    private volatile bool _gamingPaused;
 
     /// <summary>Última clave encolada (o enviada); el bucle compara la actividad contra ella.</summary>
     private volatile string? _desiredKey;
@@ -88,6 +96,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _artworkLookup = new ArtworkLookupService(
             log,
             Path.Combine(AppOptions.LocalDataDirectory, "lookup-cache.json"));
+        _lastfm = new LastFmService(options, log);
         _artworkUpload = new ArtworkUploadService(options, log);
         _discordTokens = new DiscordTokenService(options, log);
         _externalAssets = new ExternalAssetsService(options, _discordTokens, log);
@@ -234,6 +243,26 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 {
                     MaybeTrimMemory();
 
+                    // Modo juego: si hay una app a pantalla completa en primer plano, pausar presencia.
+                    if (_options.GamingMode)
+                    {
+                        var fs = IsForegroundFullscreen();
+                        if (fs && !_gamingPaused)
+                        {
+                            _gamingPaused = true;
+                            _signal.Set();
+                        }
+                        else if (!fs && _gamingPaused)
+                        {
+                            _gamingPaused = false;
+                            _signal.Set();
+                        }
+                    }
+                    else if (_gamingPaused)
+                    {
+                        _gamingPaused = false;
+                    }
+
                     if (Interlocked.Exchange(ref _restartMonitorRequested, 0) == 1)
                     {
                         _monitor.Reset();
@@ -243,11 +272,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
                     var forceRepublish = Interlocked.Exchange(ref _forceRepublish, 0) == 1;
 
-                    if (_paused && !_options.ShowPausedMedia)
+                    if ((_paused || _gamingPaused) && !_options.ShowPausedMedia)
                     {
                         _lastSnapshot = null;
                         _currentActivity = null;
-                        SetStatus("Pausado");
+                        SetStatus("Paused");
 
                         if (!string.Equals(_desiredKey, IdleKey, StringComparison.Ordinal))
                         {
@@ -372,6 +401,26 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     var key = activity is null
                         ? IdleKey
                         : $"{snapshot!.ActivityKey}|{activity.Details}|{activity.State}";
+
+                    // Historial de escucha: se registra cuando aparece una pista nueva.
+                    if (_options.ListeningHistory && snapshot is { IsActive: true }
+                        && !string.Equals(key, _desiredKey, StringComparison.Ordinal)
+                        && activity is not null)
+                    {
+                        try { _history.Record(snapshot.Title, snapshot.Artist, snapshot.Album, snapshot.PlayerName, DateTimeOffset.UtcNow); }
+                        catch { }
+
+                        // Scrobble de la pista anterior (si había una).
+                        if (_lastfm.IsEnabled && !string.IsNullOrWhiteSpace(_prevScrobbleTitle))
+                        {
+                            var t = _prevScrobbleTitle; var a = _prevScrobbleArtist; var al = _prevScrobbleAlbum; var at = _prevScrobbleAt;
+                            _ = Task.Run(() => _lastfm.ScrobbleAsync(t, a, al, at, CancellationToken.None));
+                        }
+                        _prevScrobbleTitle = snapshot.Title;
+                        _prevScrobbleArtist = snapshot.Artist;
+                        _prevScrobbleAlbum = snapshot.Album;
+                        _prevScrobbleAt = DateTimeOffset.UtcNow;
+                    }
 
                     var publishedAge = _publishedAtUnixMs == 0
                         ? TimeSpan.MaxValue
@@ -1238,6 +1287,30 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         {
             // ignore
         }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    private static bool IsForegroundFullscreen()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return false;
+            if (!GetWindowRect(hwnd, out var r)) return false;
+            var screen = System.Windows.Forms.Screen.PrimaryScreen;
+            if (screen is null) return false;
+            var b = screen.Bounds;
+            return r.Left <= b.Left && r.Top <= b.Top && r.Right >= b.Right && r.Bottom >= b.Bottom;
+        }
+        catch { return false; }
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
