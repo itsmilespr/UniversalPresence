@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -32,47 +33,107 @@ public sealed class ArtworkUploadService
     private readonly Log _log;
 
     // La URL de cada carátula se guarda en disco: la segunda vez que suena una canción ya
-    // no hay que volver a subirla, ni siquiera tras reiniciar la aplicación.
+    // no hay que volver a subirla, ni siquiera tras reiniciar la aplicación. El TTL es menor
+    // que la vida real del archivo en Litterbox (72 h) y la antigüedad se conserva para
+    // poder revalidar o renovar la URL antes de que se rompa.
     private readonly PersistentCache _cache;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ConcurrentDictionary<string, byte> _revalidated = new(StringComparer.Ordinal);
 
     public ArtworkUploadService(AppOptions options, Log log)
     {
         _options = options;
         _log = log;
-        _cache = new PersistentCache(Path.Combine(AppOptions.LocalDataDirectory, "covers-cache.json"), log);
+        _cache = new PersistentCache(
+            Path.Combine(AppOptions.LocalDataDirectory, "covers-cache.json"),
+            log,
+            RemoteAssetPolicy.EntryTtl);
     }
 
-    /// <summary>Returns the cached public URL if already uploaded, otherwise null (without starting an upload).</summary>
-    public string? GetCachedUrl(ArtworkInfo artwork)
+    /// <summary>URL pública ya subida, con su antigüedad y lo que conviene hacer con ella.</summary>
+    public sealed record CachedCover(string? Url, TimeSpan Age, bool NeedsRevalidation, bool NeedsRefresh);
+
+    /// <summary>
+    /// Devuelve la entrada cacheada de una carátula, aunque esté a punto de caducar. Null solo
+    /// cuando no hay nada guardado para esa imagen.
+    /// </summary>
+    public CachedCover? GetCachedCover(ArtworkInfo artwork)
     {
-        var key = string.IsNullOrWhiteSpace(artwork.Hash) ? artwork.FileName : artwork.Hash;
-        return _cache.Get(key);
+        var key = KeyFor(artwork);
+
+        if (!_cache.TryGet(key, out var url, out var age))
+        {
+            return null;
+        }
+
+        // Fallo reciente guardado con TTL corto: no se reintenta en cada vuelta del bucle.
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return new CachedCover(null, age, NeedsRevalidation: false, NeedsRefresh: false);
+        }
+
+        // Más vieja que la vida real del archivo: ya no se puede publicar.
+        if (age >= RemoteAssetPolicy.HostLifetime)
+        {
+            _log.Debug($"La URL de la carátula tiene {age.TotalHours:0} h y ya caducó; se sube otra.");
+            return new CachedCover(null, age, NeedsRevalidation: false, NeedsRefresh: true);
+        }
+
+        // Queda poco margen: se sigue mostrando la actual mientras se sube una nueva.
+        if (age >= RemoteAssetPolicy.MaxReuseAge)
+        {
+            return new CachedCover(url, age, NeedsRevalidation: false, NeedsRefresh: true);
+        }
+
+        var needsRevalidation = age >= RemoteAssetPolicy.RevalidateAfter
+            && !_revalidated.ContainsKey(url);
+
+        return new CachedCover(url, age, needsRevalidation, NeedsRefresh: false);
     }
 
-    /// <summary>Public https URL of the uploaded cover, or null when the upload is off/failed.</summary>
-    public async Task<string?> UploadAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    /// <summary>Descarta la URL cacheada de una carátula (el host ya la borró).</summary>
+    public void Invalidate(ArtworkInfo artwork) => _cache.Remove(KeyFor(artwork));
+
+    /// <summary>Marca una URL como comprobada en esta ejecución (no se repite el HEAD).</summary>
+    public void MarkRevalidated(string url) => _revalidated[url] = 0;
+
+    public bool IsRevalidated(string url) => _revalidated.ContainsKey(url);
+
+    private static string KeyFor(ArtworkInfo artwork) =>
+        string.IsNullOrWhiteSpace(artwork.Hash) ? artwork.FileName : artwork.Hash;
+
+    /// <summary>
+    /// Public https URL of the uploaded cover, or null when the upload is off/failed.
+    /// <paramref name="force"/> sube otra aunque haya una URL en caché (renovación).
+    /// </summary>
+    public async Task<string?> UploadAsync(
+        ArtworkInfo artwork,
+        CancellationToken cancellationToken,
+        bool force = false)
     {
         if (!_options.Artwork.UsesUpload)
         {
             return null;
         }
 
-        var key = string.IsNullOrWhiteSpace(artwork.Hash) ? artwork.FileName : artwork.Hash;
+        var key = KeyFor(artwork);
+        var previous = _cache.Get(key);
 
-        var cached = _cache.Get(key);
-        if (!string.IsNullOrWhiteSpace(cached))
+        if (!force && !string.IsNullOrWhiteSpace(previous))
         {
-            return cached;
+            return previous;
         }
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            cached = _cache.Get(key);
-            if (!string.IsNullOrWhiteSpace(cached))
+            if (!force)
             {
-                return cached;
+                var cached = _cache.Get(key);
+                if (!string.IsNullOrWhiteSpace(cached))
+                {
+                    return cached;
+                }
             }
 
             var url = _options.Artwork.UploadMode.Trim().ToLowerInvariant() switch
@@ -81,6 +142,18 @@ public sealed class ArtworkUploadService
                 "catbox" => await UploadToCatboxAsync(artwork, cancellationToken).ConfigureAwait(false),
                 _ => null,
             };
+
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                // No se borra una URL que todavía puede servir: si la renovación falla, la
+                // portada anterior sigue viva hasta su caducidad real.
+                if (string.IsNullOrWhiteSpace(previous))
+                {
+                    _cache.Set(key, null);
+                }
+
+                return null;
+            }
 
             _cache.Set(key, url);
             return url;
@@ -92,12 +165,75 @@ public sealed class ArtworkUploadService
         catch (Exception ex)
         {
             _log.Warn($"La subida de la carátula falló: {ex.Message}");
-            _cache.Set(key, null);
+
+            if (string.IsNullOrWhiteSpace(previous))
+            {
+                _cache.Set(key, null);
+            }
+
             return null;
         }
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Comprueba si una URL sigue sirviendo la imagen. true = vive, false = el host la borró,
+    /// null = no se pudo saber (red, 5xx, 403…).
+    /// </summary>
+    public async Task<bool?> IsUrlAliveAsync(string url, CancellationToken cancellationToken)
+    {
+        if (!IsPublicHttps(url))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var head = new HttpRequestMessage(HttpMethod.Head, url);
+            using var headResponse = await Http
+                .SendAsync(head, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (headResponse.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            {
+                return false;
+            }
+
+            if (headResponse.IsSuccessStatusCode)
+            {
+                return true;
+            }
+
+            if (headResponse.StatusCode is not (HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented))
+            {
+                return null;
+            }
+
+            // Algunos hosts no aceptan HEAD: se pide solo el primer byte.
+            using var get = new HttpRequestMessage(HttpMethod.Get, url);
+            get.Headers.Range = new RangeHeaderValue(0, 0);
+            using var getResponse = await Http
+                .SendAsync(get, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (getResponse.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            {
+                return false;
+            }
+
+            return getResponse.IsSuccessStatusCode ? true : null;
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo comprobar la carátula: {ex.Message}");
+            return null;
         }
     }
 

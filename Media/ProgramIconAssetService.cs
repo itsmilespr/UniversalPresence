@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using UniversalPresence.Configuration;
-using UniversalPresence.Discord;
 using UniversalPresence.Infrastructure;
 
 namespace UniversalPresence.Media;
@@ -17,37 +16,38 @@ namespace UniversalPresence.Media;
 /// bucle se quedaba bloqueado. Ahora se extrae y se sube una sola vez, en segundo plano,
 /// y a partir de ahí se reutiliza al instante; también entre reinicios, desde
 /// %LOCALAPPDATA%\UniversalPresence\icons-cache.json.
+///
+/// El host (Litterbox) borra el archivo a las 72 h, así que la URL se revalida a las 24 h
+/// y se renueva a las 60 h: nunca se publica una URL ya caducada.
 /// </summary>
 public sealed class ProgramIconAssetService
 {
-    private const string CacheVersion = "5";
+    private const string CacheVersion = "6";
     private static readonly TimeSpan NegativeTtl = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan PositiveTtl = TimeSpan.FromDays(7);
 
     private readonly AppOptions _options;
     private readonly ArtworkUploadService _upload;
-    private readonly ExternalAssetsService _externalAssets;
     private readonly Log _log;
     private readonly string _cachePath;
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _revalidating = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _retryAfter = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _fileGate = new();
 
     public ProgramIconAssetService(
         AppOptions options,
         ArtworkUploadService upload,
-        ExternalAssetsService externalAssets,
         Log log)
     {
         _options = options;
         _upload = upload;
-        _externalAssets = externalAssets;
         _log = log;
         _cachePath = Path.Combine(AppOptions.LocalDataDirectory, "icons-cache.json");
         Load();
     }
 
-    private readonly record struct Entry(string? Url, DateTimeOffset ExpiresAt);
+    private readonly record struct Entry(string? Url, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
 
     /// <summary>
     /// URL pública del icono si ya se conoce (respuesta inmediata). Si no, arranca la
@@ -62,23 +62,101 @@ public sealed class ProgramIconAssetService
             return null;
         }
 
-        if (_entries.TryGetValue(key, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
+        var now = DateTimeOffset.UtcNow;
+
+        if (_entries.TryGetValue(key, out var entry) && entry.ExpiresAt > now)
         {
-            return entry.Url;
+            if (string.IsNullOrWhiteSpace(entry.Url))
+            {
+                // Fallo reciente: se respeta el TTL negativo en vez de reintentar cada vuelta.
+                return null;
+            }
+
+            var age = now - entry.CreatedAt;
+
+            if (age < RemoteAssetPolicy.HostLifetime)
+            {
+                var retryBlocked = _retryAfter.TryGetValue(key, out var retryAt) && retryAt > now;
+
+                if (!retryBlocked)
+                {
+                    if (age >= RemoteAssetPolicy.MaxReuseAge)
+                    {
+                        // Sigue siendo válida unas horas, pero se prepara otra sin dejar de
+                        // mostrarla: si la subida falla, la vieja sigue en pie.
+                        StartResolve(key, appUserModelId, executablePath, resolved);
+                    }
+                    else if (age >= RemoteAssetPolicy.RevalidateAfter && !_upload.IsRevalidated(entry.Url!))
+                    {
+                        StartRevalidation(key, entry.Url!, appUserModelId, executablePath, resolved);
+                    }
+                }
+
+                return entry.Url;
+            }
+
+            // Más vieja que la vida real del archivo: ya no sirve.
+            _entries.TryRemove(key, out _);
         }
 
+        StartResolve(key, appUserModelId, executablePath, resolved);
+        return null;
+    }
+
+    private void StartResolve(string key, string? appUserModelId, string? executablePath, Action? resolved)
+    {
         if (!_pending.TryAdd(key, 0))
         {
-            // Ya hay una resolución en curso para este reproductor.
-            return null;
+            return;
         }
 
         _ = Task.Run(() => ResolveAsync(key, appUserModelId, executablePath, resolved));
-        return null;
+    }
+
+    private void StartRevalidation(
+        string key,
+        string url,
+        string? appUserModelId,
+        string? executablePath,
+        Action? resolved)
+    {
+        if (!_revalidating.TryAdd(key, 0))
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var alive = await _upload.IsUrlAliveAsync(url, CancellationToken.None).ConfigureAwait(false);
+                _upload.MarkRevalidated(url);
+
+                if (alive != false)
+                {
+                    // Sigue viva (o no se pudo comprobar): no se toca.
+                    return;
+                }
+
+                _log.Info($"El icono del reproductor «{key}» ya no está en el host; se renueva.");
+                _entries.TryRemove(key, out _);
+                StartResolve(key, appUserModelId, executablePath, resolved);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"No se pudo revalidar el icono de «{key}»: {ex.Message}");
+            }
+            finally
+            {
+                _revalidating.TryRemove(key, out _);
+            }
+        });
     }
 
     private async Task ResolveAsync(string key, string? appUserModelId, string? executablePath, Action? resolved)
     {
+        _entries.TryGetValue(key, out var previous);
+
         try
         {
             // La extracción bloquea (enumera procesos y usa GDI): fuera del hilo del bucle.
@@ -88,14 +166,14 @@ public sealed class ProgramIconAssetService
 
             if (string.IsNullOrWhiteSpace(iconPath))
             {
-                Remember(key, null, DateTimeOffset.UtcNow + NegativeTtl);
+                Fail(key, previous, "no se encontró el icono del ejecutable");
                 return;
             }
 
             var file = new FileInfo(iconPath);
             if (!file.Exists || file.Length == 0)
             {
-                Remember(key, null, DateTimeOffset.UtcNow + NegativeTtl);
+                Fail(key, previous, "el archivo del icono está vacío");
                 return;
             }
 
@@ -106,29 +184,54 @@ public sealed class ProgramIconAssetService
                 StableHash($"{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}"),
                 (int)file.Length);
 
-            var url = await _upload.UploadAsync(artwork, CancellationToken.None).ConfigureAwait(false);
+            // force: el caché de subidas puede tener la URL vieja (ya caducada en el host).
+            var url = await _upload
+                .UploadAsync(artwork, CancellationToken.None, force: true)
+                .ConfigureAwait(false);
+
             if (string.IsNullOrWhiteSpace(url))
             {
-                Remember(key, null, DateTimeOffset.UtcNow + NegativeTtl);
+                Fail(key, previous, "el host no devolvió una URL");
                 return;
             }
 
             // Discord hace proxy automáticamente de las URLs HTTPS públicas en el RPC de
             // escritorio, así que se envía la URL cruda (Litterbox). La conversión a mp:
             // no renderizaba en el cliente y el icono no aparecía, así que se omite.
-            Remember(key, url, DateTimeOffset.UtcNow + PositiveTtl);
+            _retryAfter.TryRemove(key, out _);
+            Remember(key, url, DateTimeOffset.UtcNow + RemoteAssetPolicy.EntryTtl);
             _log.Info($"Icono del reproductor listo: {iconPath} → {url}");
             resolved?.Invoke();
         }
         catch (Exception ex)
         {
             _log.Debug($"No se pudo preparar el icono del reproductor: {ex.Message}");
-            Remember(key, null, DateTimeOffset.UtcNow + NegativeTtl);
+            Fail(key, previous, ex.Message);
         }
         finally
         {
             _pending.TryRemove(key, out _);
         }
+    }
+
+    /// <summary>
+    /// Un fallo no debe tirar una URL que todavía puede servir: si la anterior sigue viva
+    /// se conserva y solo se pospone el reintento.
+    /// </summary>
+    private void Fail(string key, Entry previous, string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        _retryAfter[key] = now + NegativeTtl;
+
+        if (previous.Url is { Length: > 0 } && previous.CreatedAt + RemoteAssetPolicy.HostLifetime > now)
+        {
+            _log.Debug($"Se mantiene el icono anterior de «{key}»: {reason}.");
+            _entries[key] = previous;
+            return;
+        }
+
+        _log.Debug($"Sin icono para «{key}»: {reason}.");
+        Remember(key, null, now + NegativeTtl);
     }
 
     /// <summary>
@@ -142,35 +245,14 @@ public sealed class ProgramIconAssetService
             if (string.IsNullOrWhiteSpace(pair.Value.Url) || pair.Value.ExpiresAt <= DateTimeOffset.UtcNow)
             {
                 _entries.TryRemove(pair.Key, out _);
+                _retryAfter.TryRemove(pair.Key, out _);
             }
         }
-    }
-
-    private async Task<string?> ConvertWithRetryAsync(string url)
-    {
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            var mpUrl = await _externalAssets
-                .ConvertAsync(url, CancellationToken.None, ignoreCache: attempt > 0)
-                .ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(mpUrl))
-            {
-                return mpUrl;
-            }
-
-            if (attempt < 2)
-            {
-                await Task.Delay(350 * (attempt + 1)).ConfigureAwait(false);
-            }
-        }
-
-        return null;
     }
 
     private void Remember(string key, string? url, DateTimeOffset expiresAt)
     {
-        _entries[key] = new Entry(url, expiresAt);
+        _entries[key] = new Entry(url, DateTimeOffset.UtcNow, expiresAt);
 
         if (url is not null)
         {
@@ -207,12 +289,17 @@ public sealed class ProgramIconAssetService
                 Directory.CreateDirectory(directory);
             }
 
-            var urls = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var now = DateTimeOffset.UtcNow;
+            var entries = new Dictionary<string, SavedEntry>(StringComparer.OrdinalIgnoreCase);
             foreach (var pair in _entries)
             {
-                if (!string.IsNullOrWhiteSpace(pair.Value.Url) && pair.Value.ExpiresAt > DateTimeOffset.UtcNow)
+                if (!string.IsNullOrWhiteSpace(pair.Value.Url) && pair.Value.ExpiresAt > now)
                 {
-                    urls[pair.Key] = pair.Value.Url!;
+                    entries[pair.Key] = new SavedEntry
+                    {
+                        Url = pair.Value.Url,
+                        CreatedAt = pair.Value.CreatedAt,
+                    };
                 }
             }
 
@@ -220,8 +307,8 @@ public sealed class ProgramIconAssetService
             {
                 Version = CacheVersion,
                 ClientId = _options.DiscordClientId,
-                SavedAt = DateTimeOffset.UtcNow,
-                Urls = urls,
+                SavedAt = now,
+                Entries = entries,
             };
 
             File.WriteAllText(_cachePath, JsonSerializer.Serialize(payload));
@@ -242,25 +329,32 @@ public sealed class ProgramIconAssetService
             }
 
             var payload = JsonSerializer.Deserialize<CacheFile>(File.ReadAllText(_cachePath));
-            if (payload is null
-                || !string.Equals(payload.Version, CacheVersion, StringComparison.Ordinal)
-                || DateTimeOffset.UtcNow - payload.SavedAt > PositiveTtl)
+            if (payload is null || !string.Equals(payload.Version, CacheVersion, StringComparison.Ordinal))
             {
                 return;
             }
 
-            // Las URLs mp: pertenecen a la aplicación de Discord con la que se generaron.
+            // Las URLs pertenecen a la aplicación de Discord con la que se generaron.
             if (!string.Equals(payload.ClientId ?? string.Empty, _options.DiscordClientId, StringComparison.Ordinal))
             {
                 return;
             }
 
-            foreach (var pair in payload.Urls ?? new Dictionary<string, string>())
+            var now = DateTimeOffset.UtcNow;
+            foreach (var pair in payload.Entries ?? new Dictionary<string, SavedEntry>())
             {
-                if (!string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+                if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value.Url))
                 {
-                    _entries[pair.Key] = new Entry(pair.Value, DateTimeOffset.UtcNow + PositiveTtl);
+                    continue;
                 }
+
+                var expiresAt = pair.Value.CreatedAt + RemoteAssetPolicy.EntryTtl;
+                if (expiresAt <= now)
+                {
+                    continue;
+                }
+
+                _entries[pair.Key] = new Entry(pair.Value.Url, pair.Value.CreatedAt, expiresAt);
             }
 
             _log.Debug($"Caché de iconos cargada: {_entries.Count} reproductor(es).");
@@ -279,6 +373,13 @@ public sealed class ProgramIconAssetService
 
         public DateTimeOffset SavedAt { get; set; }
 
-        public Dictionary<string, string>? Urls { get; set; }
+        public Dictionary<string, SavedEntry>? Entries { get; set; }
+    }
+
+    private sealed class SavedEntry
+    {
+        public string? Url { get; set; }
+
+        public DateTimeOffset CreatedAt { get; set; }
     }
 }

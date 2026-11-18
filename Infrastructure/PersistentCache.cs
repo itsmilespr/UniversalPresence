@@ -15,21 +15,27 @@ namespace UniversalPresence.Infrastructure;
 /// </summary>
 public sealed class PersistentCache
 {
-    private const string CacheVersion = "2";
+    private const string CacheVersion = "3";
     private const int MaxEntries = 3000;
 
-    private static readonly TimeSpan SuccessTtl = TimeSpan.FromDays(14);
+    private static readonly TimeSpan DefaultSuccessTtl = TimeSpan.FromDays(14);
     private static readonly TimeSpan FailureTtl = TimeSpan.FromMinutes(10);
 
     private readonly string _path;
     private readonly Log _log;
+    private readonly TimeSpan _successTtl;
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
 
-    public PersistentCache(string path, Log log)
+    /// <param name="successTtl">
+    /// Cuánto se reutiliza un acierto. Las URLs de un host temporal (Litterbox) necesitan un
+    /// TTL menor que su vida real; las búsquedas de catálogo pueden durar días.
+    /// </param>
+    public PersistentCache(string path, Log log, TimeSpan? successTtl = null)
     {
         _path = path;
         _log = log;
+        _successTtl = successTtl ?? DefaultSuccessTtl;
         Load();
     }
 
@@ -53,15 +59,63 @@ public sealed class PersistentCache
         }
     }
 
+    /// <summary>
+    /// Valor con su antigüedad real (desde que se guardó), para poder decidir si conviene
+    /// revalidarlo antes de usarlo.
+    /// </summary>
+    public bool TryGet(string key, out string? value, out TimeSpan age)
+    {
+        lock (_gate)
+        {
+            value = null;
+            age = TimeSpan.Zero;
+
+            if (!_entries.TryGetValue(key, out var entry))
+            {
+                return false;
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            if (entry.ExpiresAt <= now)
+            {
+                _entries.Remove(key);
+                return false;
+            }
+
+            value = entry.Value;
+            age = now - (entry.CreatedAt == default ? now : entry.CreatedAt);
+            if (age < TimeSpan.Zero)
+            {
+                age = TimeSpan.Zero;
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>Elimina una entrada (por ejemplo, una URL que el host ya borró).</summary>
+    public void Remove(string key)
+    {
+        lock (_gate)
+        {
+            if (_entries.Remove(key))
+            {
+                Persist();
+            }
+        }
+    }
+
     /// <summary>Guarda un acierto (<paramref name="value"/> no nulo) o un fallo (TTL corto).</summary>
     public void Set(string key, string? value)
     {
         lock (_gate)
         {
+            var now = DateTimeOffset.UtcNow;
             _entries[key] = new Entry
             {
                 Value = value,
-                ExpiresAt = DateTimeOffset.UtcNow + (value is null ? FailureTtl : SuccessTtl),
+                CreatedAt = now,
+                ExpiresAt = now + (value is null ? FailureTtl : _successTtl),
             };
 
             if (_entries.Count > MaxEntries)
@@ -158,6 +212,12 @@ public sealed class PersistentCache
             {
                 if (!string.IsNullOrWhiteSpace(pair.Key) && pair.Value.ExpiresAt > DateTimeOffset.UtcNow)
                 {
+                    // Las cachés antiguas no guardaban CreatedAt: se deduce del TTL.
+                    if (pair.Value.CreatedAt == default)
+                    {
+                        pair.Value.CreatedAt = pair.Value.ExpiresAt - _successTtl;
+                    }
+
                     _entries[pair.Key] = pair.Value;
                 }
             }
@@ -180,6 +240,9 @@ public sealed class PersistentCache
     public sealed class Entry
     {
         public string? Value { get; set; }
+
+        /// <summary>Cuándo se obtuvo el valor (no se renueva al leerlo).</summary>
+        public DateTimeOffset CreatedAt { get; set; }
 
         public DateTimeOffset ExpiresAt { get; set; }
     }

@@ -94,9 +94,10 @@ etiqueta `v*` se publica la release con el `.exe` adjunto.
 ## Privacidad
 
 Universal Presence no tiene servidores ni cuentas. Solo escribe en tu equipo y habla con Discord
-por su canal local. Para mostrar la portada cuando el reproductor no la ofrece, envía
-título/artista/álbum a las API públicas de iTunes y Deezer; se puede desactivar con
-`"Artwork": { "Mode": "None" }`.
+por su canal local. Para que Discord pueda mostrar la carátula extraída, la sube a Litterbox
+(catbox.moe); se puede desactivar con `"Artwork": { "UploadMode": "None" }`. Para buscar una
+portada cuando el reproductor no la ofrece, envía título/artista/álbum a las API públicas de
+iTunes y Deezer; se puede desactivar con `"Artwork": { "Mode": "None" }`.
 
 ## Limitaciones conocidas
 

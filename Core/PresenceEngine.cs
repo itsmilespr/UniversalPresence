@@ -89,7 +89,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _artworkUpload = new ArtworkUploadService(options, log);
         _discordTokens = new DiscordTokenService(options, log);
         _externalAssets = new ExternalAssetsService(options, _discordTokens, log);
-        _programIcons = new ProgramIconAssetService(options, _artworkUpload, _externalAssets, log);
+        _programIcons = new ProgramIconAssetService(options, _artworkUpload, log);
     }
 
     /// <summary>Raised when the tray needs to repaint; fires on a worker thread.</summary>
@@ -414,16 +414,34 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 return snapshot;
             }
 
-            var uploaded = _artworkUpload.GetCachedUrl(snapshot.Artwork);
-            if (!string.IsNullOrWhiteSpace(uploaded))
-            {
-                // Discord hace proxy automáticamente de las URLs HTTPS públicas en el RPC
-                // de escritorio, así que se envía la URL cruda (más fiable que el mp:,
-                // que en este cliente no se resolvía). La conversión a mp: se omite.
-                return snapshot with { PublicArtworkUrl = uploaded };
-            }
+            var cachedCover = _artworkUpload.GetCachedCover(snapshot.Artwork);
 
-            StartCoverUpload(snapshot.Artwork);
+            if (cachedCover is not null)
+            {
+                // La URL se revalida a las 24 h y se renueva a las 60 h: Litterbox borra el
+                // archivo a las 72 h y antes se guardaba la URL durante días.
+                if (cachedCover.NeedsRevalidation)
+                {
+                    StartCoverRevalidation(snapshot.Artwork, cachedCover.Url!);
+                }
+
+                if (cachedCover.NeedsRefresh)
+                {
+                    StartCoverUpload(snapshot.Artwork, force: true);
+                }
+
+                if (!string.IsNullOrWhiteSpace(cachedCover.Url))
+                {
+                    // Discord hace proxy automáticamente de las URLs HTTPS públicas en el
+                    // RPC de escritorio, así que se envía la URL cruda (más fiable que el
+                    // mp:, que en este cliente no se resolvía).
+                    return snapshot with { PublicArtworkUrl = cachedCover.Url };
+                }
+            }
+            else
+            {
+                StartCoverUpload(snapshot.Artwork);
+            }
 
             // Si la subida aún no está disponible, intentar también la búsqueda en
             // catálogo en paralelo: así las pistas que no están en el host público siguen
@@ -513,24 +531,27 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             && string.Equals(a.Album, b.Album, StringComparison.Ordinal);
     }
 
+    private static string CoverKey(ArtworkInfo artwork) =>
+        string.IsNullOrWhiteSpace(artwork.Hash) ? artwork.FileName : artwork.Hash;
+
     /// <summary>Sube la carátula al host público en segundo plano y republica al terminar.</summary>
-    private void StartCoverUpload(ArtworkInfo artwork)
+    private void StartCoverUpload(ArtworkInfo artwork, bool force = false)
     {
-        var coverKey = string.IsNullOrWhiteSpace(artwork.Hash) ? artwork.FileName : artwork.Hash;
+        var coverKey = CoverKey(artwork);
 
         if (!_resolvingCovers.TryAdd(coverKey, 0))
         {
             return;
         }
 
-        _ = Task.Run(() => ResolveCoverAsync(coverKey, artwork));
+        _ = Task.Run(() => ResolveCoverAsync(coverKey, artwork, force));
     }
 
-    private async Task ResolveCoverAsync(string coverKey, ArtworkInfo artwork)
+    private async Task ResolveCoverAsync(string coverKey, ArtworkInfo artwork, bool force)
     {
         try
         {
-            var url = await _artworkUpload.UploadAsync(artwork, _cts.Token).ConfigureAwait(false);
+            var url = await _artworkUpload.UploadAsync(artwork, _cts.Token, force).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(url))
             {
                 return;
@@ -549,6 +570,64 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         catch (Exception ex)
         {
             _log.Debug($"No se pudo preparar la portada: {ex.Message}");
+        }
+        finally
+        {
+            _resolvingCovers.TryRemove(coverKey, out _);
+        }
+    }
+
+    /// <summary>
+    /// Comprueba en segundo plano que una URL de portada sigue viva. Si el host ya la borró,
+    /// se sube otra y se republica; si solo hay dudas (red, 5xx), no se toca.
+    /// </summary>
+    private void StartCoverRevalidation(ArtworkInfo artwork, string url)
+    {
+        var coverKey = CoverKey(artwork);
+
+        if (!_resolvingCovers.TryAdd(coverKey, 0))
+        {
+            return;
+        }
+
+        _ = Task.Run(() => RevalidateCoverAsync(coverKey, artwork, url));
+    }
+
+    private async Task RevalidateCoverAsync(string coverKey, ArtworkInfo artwork, string url)
+    {
+        try
+        {
+            var alive = await _artworkUpload.IsUrlAliveAsync(url, _cts.Token).ConfigureAwait(false);
+            _artworkUpload.MarkRevalidated(url);
+
+            if (alive != false)
+            {
+                return;
+            }
+
+            _log.Info("La URL pública de la portada ya no existe; se sube otra.");
+            _artworkUpload.Invalidate(artwork);
+
+            var fresh = await _artworkUpload
+                .UploadAsync(artwork, _cts.Token, force: true)
+                .ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(fresh))
+            {
+                return;
+            }
+
+            _log.Info($"Portada renovada: {artwork.FileName} → {fresh}");
+            Interlocked.Exchange(ref _forceRepublish, 1);
+            _signal.Set();
+        }
+        catch (OperationCanceledException)
+        {
+            // cerrando
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo revalidar la portada: {ex.Message}");
         }
         finally
         {

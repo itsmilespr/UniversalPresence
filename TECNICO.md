@@ -18,7 +18,7 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | `Media/ArtworkCache.cs` | Lee el `Thumbnail` de SMTC, lo normaliza a 512–1024 px y lo guarda en disco con hash SHA-256. Memoriza por pista para no releer la imagen en cada vuelta. |
 | `Media/ArtworkLookupService.cs` | Busca una portada pública en **iTunes Search** y **Deezer** en paralelo, con caché de 6 h. |
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
-| `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID y cachea la URL. |
+| `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
 | `Discord/DiscordIpcClient.cs` | Named pipe `discord-ipc-0..9`, handshake `{v:1, client_id}`, frames de 8 bytes (op + longitud), `PING`→`PONG`, `SET_ACTIVITY`. |
 | `Discord/DiscordPresenceService.cs` | Conexión perezosa, reconexión con backoff (1 s → 30 s), ventana de 5 actualizaciones / 20 s y limpieza de la actividad al salir. |
 | `Core/PresenceEngine.cs` | Bucle de lectura y publicación, publicador independiente, contador de repeticiones y estado para la bandeja. |
@@ -72,8 +72,10 @@ Notas:
   `external-assets`, que exige un token OAuth2 de usuario y no renderizaba de forma fiable; ese
   camino ya no se usa para la actividad.
 - `UploadMode: "None"` desactiva la subida (útil por privacidad o si usas `ExternalUrlBase`).
-- Cada carátula se sube una vez y la URL queda en `covers-cache.json`. Los fallos se reintentan
-  a los 10 minutos. Litterbox caduca a las 72 h; al dejar de servir la imagen se vuelve a subir.
+- Cada carátula se sube una vez y la URL queda en `covers-cache.json` con su fecha real de
+  subida. Litterbox borra el archivo a las 72 h, así que la URL se **revalida con un HEAD a
+  las 24 h** y se **renueva a las 60 h**; nunca se publica una URL ya caducada. Si el host no
+  devuelve una nueva, se conserva la anterior mientras siga viva.
 - Los archivos viven en `%LOCALAPPDATA%\UniversalPresence\artwork`.
 
 ## 4. Tiempos y saltos
