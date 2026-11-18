@@ -42,6 +42,8 @@ lista: si Windows expone la sesión, se publica.
 - **Se actualiza sola.** Al arrancar y cada 6 h consulta GitHub Releases; descarga la nueva
   versión, verifica su SHA-256 y la instala al cerrar (o al reiniciar desde el menú). Se puede
   desactivar en el menú del icono.
+- **Comparte la app en tu perfil.** La actividad lleva dos botones, «Descargar» y «Cómo
+  funciona», para que quien vea lo que escuchas llegue al proyecto en un clic.
 - **Todo local.** Sin cuenta, sin telemetría y sin servidores propios: solo el IPC local de
   Discord.
 - **Un solo `.exe`.** Autocontenido, sin instalar .NET. Inicio con Windows opcional (activado

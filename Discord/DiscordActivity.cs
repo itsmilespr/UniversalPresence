@@ -34,6 +34,13 @@ public sealed class DiscordActivity
     public DiscordAssets? Assets { get; set; }
 
     /// <summary>
+    /// Botones del perfil (máximo 2). Discord exige label + url https. Son la vía por la
+    /// que alguien que ve la actividad puede llegar a la app.
+    /// </summary>
+    [JsonPropertyName("buttons")]
+    public List<DiscordButton>? Buttons { get; set; }
+
+    /// <summary>
     /// Cuándo se construyó la actividad. No se envía a Discord: el servicio lo usa para
     /// desplazar los timestamps hasta el instante real del envío cuando hay que esperar
     /// (límite de actualizaciones), y así el reloj no queda por detrás del audio.
@@ -51,6 +58,15 @@ public sealed class DiscordActivity
     public bool FrozenTimestamps { get; set; }
 
     public string ToJson() => JsonSerializer.Serialize(this, DiscordJson.Options);
+}
+
+public sealed class DiscordButton
+{
+    [JsonPropertyName("label")]
+    public string? Label { get; set; }
+
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
 }
 
 public sealed class DiscordTimestamps

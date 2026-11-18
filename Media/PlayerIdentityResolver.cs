@@ -25,7 +25,9 @@ public sealed record PlayerIdentity(string Name, string AppUserModelId, string? 
 public sealed class PlayerIdentityResolver
 {
     private static readonly TimeSpan AuthoritativeTtl = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan GuessedTtl = TimeSpan.FromSeconds(30);
+    // Un AUMID que no está registrado no va a cambiar de nombre cada minuto: reintentar
+    // cada 30 s solo gastaba objetos WinRT y enumeraba procesos sin necesidad.
+    private static readonly TimeSpan GuessedTtl = TimeSpan.FromMinutes(5);
     private static readonly Regex PublisherHash = new("_[A-Za-z0-9]{13}$", RegexOptions.Compiled);
     private static readonly Regex TrailingInstanceId = new(@"[._][0-9A-Fa-f]{8}$", RegexOptions.Compiled);
 

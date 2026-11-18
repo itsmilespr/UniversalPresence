@@ -19,6 +19,13 @@ public sealed class ActivityFactory
 {
     private const int MaxFieldLength = 128;
 
+    // Botones de la actividad: quien ve el perfil puede descargar la app o entender qué es.
+    private const string DownloadUrl =
+        "https://github.com/itsmilespr/UniversalPresence/releases/latest";
+
+    private const string HowItWorksUrl =
+        "https://itsmilespr.github.io/UniversalPresence/#como-funciona";
+
     private readonly AppOptions _options;
 
     public ActivityFactory(AppOptions options)
@@ -108,6 +115,11 @@ public sealed class ActivityFactory
             Details = Clip(FirstNonEmpty(snapshot.Title, artist, player, "Reproduciendo")),
             State = ClipNullable(state),
             Timestamps = BuildTimestamps(snapshot, status),
+            Buttons = new List<DiscordButton>
+            {
+                new() { Label = "Descargar", Url = DownloadUrl },
+                new() { Label = "Cómo funciona", Url = HowItWorksUrl },
+            },
             Assets = new DiscordAssets
             {
                 LargeImage = largeImage,

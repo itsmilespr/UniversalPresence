@@ -17,9 +17,33 @@ public sealed class SmtcMonitor : IDisposable
     private readonly PlayerIdentityResolver _identity;
     private readonly ArtworkCache _artwork;
     private readonly SemaphoreSlim _startGate = new(1, 1);
+    /// <summary>
+    /// Cada llamada a GetSessions/GetCurrentSession/TryGetMediaPropertiesAsync crea objetos
+    /// WinRT nuevos. Con un heap gestionado diminuto casi nunca hay GC de gen2, así que sus
+    /// referencias nativas se acumulaban hasta cientos de MB. Se cachean y solo se releen
+    /// cuando el evento correspondiente avisa (o cada pocos segundos, como red de seguridad).
+    /// </summary>
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(5);
+
     private readonly object _watchGate = new();
+    private readonly object _metadataGate = new();
     private readonly Dictionary<string, GlobalSystemMediaTransportControlsSession> _watched =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, MetadataCache> _metadata = new(StringComparer.OrdinalIgnoreCase);
+
+    private IReadOnlyList<GlobalSystemMediaTransportControlsSession> _sessions =
+        Array.Empty<GlobalSystemMediaTransportControlsSession>();
+    private int _sessionsVersion = 1;
+    private int _sessionsSnapshotVersion = -1;
+    private DateTimeOffset _sessionsReadAt = DateTimeOffset.MinValue;
+
+    private GlobalSystemMediaTransportControlsSession? _currentSession;
+    private int _currentVersion = 1;
+    private int _currentSnapshotVersion = -1;
+    private DateTimeOffset _currentReadAt = DateTimeOffset.MinValue;
+
+    private int _metadataVersion;
 
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private int _consecutiveFailures;
@@ -61,25 +85,8 @@ public sealed class SmtcMonitor : IDisposable
 
         _manager = null;
         _consecutiveFailures = 0;
-
-        lock (_watchGate)
-        {
-            foreach (var session in _watched.Values)
-            {
-                try
-                {
-                    session.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
-                    session.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
-                    session.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
-                }
-                catch
-                {
-                    // ignore
-                }
-            }
-
-            _watched.Clear();
-        }
+        ClearWatches();
+        ResetSnapshots();
 
         _log.Info("Monitor SMTC reiniciado (configuración actualizada).");
     }
@@ -138,29 +145,9 @@ public sealed class SmtcMonitor : IDisposable
             return result;
         }
 
-        IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions;
-
-        try
-        {
-            sessions = manager.GetSessions();
-        }
-        catch (Exception ex)
-        {
-            HandleManagerFailure(ex);
-            return result;
-        }
-
+        var sessions = GetSessionsCached();
         _consecutiveFailures = 0;
-
-        var currentAumid = string.Empty;
-        try
-        {
-            currentAumid = manager.GetCurrentSession()?.SourceAppUserModelId ?? string.Empty;
-        }
-        catch
-        {
-            // ignore
-        }
+        var currentAumid = GetCurrentSessionCached()?.SourceAppUserModelId ?? string.Empty;
 
         PruneWatches(sessions);
 
@@ -241,8 +228,8 @@ public sealed class SmtcMonitor : IDisposable
 
         try
         {
-            currentAumid = manager.GetCurrentSession()?.SourceAppUserModelId ?? string.Empty;
-            match = manager.GetSessions().FirstOrDefault(candidate => string.Equals(
+            currentAumid = GetCurrentSessionCached()?.SourceAppUserModelId ?? string.Empty;
+            match = GetSessionsCached().FirstOrDefault(candidate => string.Equals(
                 (candidate.SourceAppUserModelId ?? string.Empty).Trim(),
                 appUserModelId.Trim(),
                 StringComparison.OrdinalIgnoreCase));
@@ -306,7 +293,7 @@ public sealed class SmtcMonitor : IDisposable
                     return null;
                 }
 
-                var media = await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken).ConfigureAwait(false);
+                var media = await GetMediaPropertiesAsync(session, aumid, cancellationToken).ConfigureAwait(false);
 
                 var title = Clean(media?.Title);
                 var artist = Clean(media?.Artist);
@@ -330,7 +317,7 @@ public sealed class SmtcMonitor : IDisposable
                     return null;
                 }
 
-                var (position, duration) = ReadTimeline(session, status, projectPosition);
+                var (position, duration, lastUpdated) = ReadTimeline(session, status, projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
                 var artwork = await _artwork.GetAsync(media?.Thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
 
@@ -353,7 +340,7 @@ public sealed class SmtcMonitor : IDisposable
                     Duration = duration,
                     Status = status,
                     CapturedAt = DateTimeOffset.UtcNow,
-                    SourceUpdatedAt = ReadLastUpdated(session),
+                    SourceUpdatedAt = lastUpdated,
                     IsCurrentSession = aumid.Length > 0 && string.Equals(aumid, currentAumid, StringComparison.OrdinalIgnoreCase),
                     Artwork = artwork,
                 };
@@ -380,7 +367,7 @@ public sealed class SmtcMonitor : IDisposable
         return null;
     }
 
-    private static (TimeSpan Position, TimeSpan Duration) ReadTimeline(
+    private static (TimeSpan Position, TimeSpan Duration, DateTimeOffset LastUpdated) ReadTimeline(
         GlobalSystemMediaTransportControlsSession session,
         PlaybackState status,
         bool projectPosition)
@@ -390,7 +377,7 @@ public sealed class SmtcMonitor : IDisposable
             var timeline = session.GetTimelineProperties();
             if (timeline is null)
             {
-                return (TimeSpan.Zero, TimeSpan.Zero);
+                return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
             }
 
             var duration = timeline.EndTime > timeline.StartTime
@@ -424,23 +411,11 @@ public sealed class SmtcMonitor : IDisposable
                 position = duration;
             }
 
-            return (position, duration);
+            return (position, duration, timeline.LastUpdatedTime);
         }
         catch
         {
-            return (TimeSpan.Zero, TimeSpan.Zero);
-        }
-    }
-
-    private static DateTimeOffset ReadLastUpdated(GlobalSystemMediaTransportControlsSession session)
-    {
-        try
-        {
-            return session.GetTimelineProperties().LastUpdatedTime;
-        }
-        catch
-        {
-            return DateTimeOffset.MinValue;
+            return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
         }
     }
 
@@ -534,6 +509,14 @@ public sealed class SmtcMonitor : IDisposable
                 _watched.Remove(pair.Key);
             }
         }
+
+        lock (_metadataGate)
+        {
+            foreach (var key in _metadata.Keys.Where(key => !live.Contains(key)).ToList())
+            {
+                _metadata.Remove(key);
+            }
+        }
     }
 
     private void HandleManagerFailure(Exception exception)
@@ -564,26 +547,35 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         _manager = null;
-
-        lock (_watchGate)
-        {
-            _watched.Clear();
-        }
+        ClearWatches();
+        ResetSnapshots();
     }
 
     private void OnManagerChanged() => Changed?.Invoke();
 
     private void OnSessionsChanged(
         GlobalSystemMediaTransportControlsSessionManager sender,
-        SessionsChangedEventArgs args) => OnManagerChanged();
+        SessionsChangedEventArgs args)
+    {
+        Interlocked.Increment(ref _sessionsVersion);
+        OnManagerChanged();
+    }
 
     private void OnCurrentSessionChanged(
         GlobalSystemMediaTransportControlsSessionManager sender,
-        CurrentSessionChangedEventArgs args) => OnManagerChanged();
+        CurrentSessionChangedEventArgs args)
+    {
+        Interlocked.Increment(ref _currentVersion);
+        OnManagerChanged();
+    }
 
     private void OnSessionMediaPropertiesChanged(
         GlobalSystemMediaTransportControlsSession sender,
-        MediaPropertiesChangedEventArgs args) => OnManagerChanged();
+        MediaPropertiesChangedEventArgs args)
+    {
+        Interlocked.Increment(ref _metadataVersion);
+        OnManagerChanged();
+    }
 
     private void OnSessionPlaybackInfoChanged(
         GlobalSystemMediaTransportControlsSession sender,
@@ -611,6 +603,15 @@ public sealed class SmtcMonitor : IDisposable
             // ignore
         }
 
+        ClearWatches();
+        ResetSnapshots();
+
+        _manager = null;
+        _startGate.Dispose();
+    }
+
+    private void ClearWatches()
+    {
         lock (_watchGate)
         {
             foreach (var session in _watched.Values)
@@ -629,8 +630,132 @@ public sealed class SmtcMonitor : IDisposable
 
             _watched.Clear();
         }
+    }
 
-        _manager = null;
-        _startGate.Dispose();
+    private void ResetSnapshots()
+    {
+        _sessions = Array.Empty<GlobalSystemMediaTransportControlsSession>();
+        _sessionsSnapshotVersion = -1;
+        _sessionsReadAt = DateTimeOffset.MinValue;
+        _currentSession = null;
+        _currentSnapshotVersion = -1;
+        _currentReadAt = DateTimeOffset.MinValue;
+
+        // Fuerza releer en la próxima vuelta aunque los eventos no hayan llegado.
+        Interlocked.Increment(ref _sessionsVersion);
+        Interlocked.Increment(ref _currentVersion);
+        Interlocked.Increment(ref _metadataVersion);
+
+        lock (_metadataGate)
+        {
+            _metadata.Clear();
+        }
+    }
+
+    /// <summary>GetSessions cacheado por 5 s y por evento; evita un RCW nuevo cada segundo.</summary>
+    private IReadOnlyList<GlobalSystemMediaTransportControlsSession> GetSessionsCached()
+    {
+        var manager = _manager;
+        if (manager is null)
+        {
+            return Array.Empty<GlobalSystemMediaTransportControlsSession>();
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var version = Volatile.Read(ref _sessionsVersion);
+
+        if (version == _sessionsSnapshotVersion && now - _sessionsReadAt < SnapshotTtl)
+        {
+            return _sessions;
+        }
+
+        try
+        {
+            _sessions = manager.GetSessions();
+            _sessionsSnapshotVersion = version;
+            _sessionsReadAt = now;
+            return _sessions;
+        }
+        catch (Exception ex)
+        {
+            HandleManagerFailure(ex);
+            return Array.Empty<GlobalSystemMediaTransportControlsSession>();
+        }
+    }
+
+    private GlobalSystemMediaTransportControlsSession? GetCurrentSessionCached()
+    {
+        var manager = _manager;
+        if (manager is null)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var version = Volatile.Read(ref _currentVersion);
+
+        if (version == _currentSnapshotVersion && now - _currentReadAt < SnapshotTtl)
+        {
+            return _currentSession;
+        }
+
+        try
+        {
+            _currentSession = manager.GetCurrentSession();
+            _currentSnapshotVersion = version;
+            _currentReadAt = now;
+            return _currentSession;
+        }
+        catch
+        {
+            return _currentSession;
+        }
+    }
+
+    /// <summary>
+    /// Metadatos (incluida la miniatura) cacheados hasta que el reproductor avise de un
+    /// cambio. Sin esto se creaba un objeto WinRT con la imagen cada segundo.
+    /// </summary>
+    private async Task<GlobalSystemMediaTransportControlsSessionMediaProperties?> GetMediaPropertiesAsync(
+        GlobalSystemMediaTransportControlsSession session,
+        string aumid,
+        CancellationToken cancellationToken)
+    {
+        if (aumid.Length == 0)
+        {
+            return await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken).ConfigureAwait(false);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var version = Volatile.Read(ref _metadataVersion);
+
+        lock (_metadataGate)
+        {
+            if (_metadata.TryGetValue(aumid, out var cached)
+                && cached.Media is not null
+                && cached.Version == version
+                && now - cached.At < MetadataTtl)
+            {
+                return cached.Media;
+            }
+        }
+
+        var media = await session.TryGetMediaPropertiesAsync().AsTask(cancellationToken).ConfigureAwait(false);
+
+        lock (_metadataGate)
+        {
+            _metadata[aumid] = new MetadataCache { Media = media, Version = version, At = now };
+        }
+
+        return media;
+    }
+
+    private sealed class MetadataCache
+    {
+        public GlobalSystemMediaTransportControlsSessionMediaProperties? Media { get; init; }
+
+        public int Version { get; init; }
+
+        public DateTimeOffset At { get; init; }
     }
 }

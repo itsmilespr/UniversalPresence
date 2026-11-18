@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using UniversalPresence.Configuration;
 using UniversalPresence.Discord;
@@ -56,6 +57,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private DateTimeOffset _metadataGapSince = DateTimeOffset.MinValue;
     private volatile MediaSnapshot? _lastSnapshot;
     private int _playCount = 0;
+    private DateTimeOffset _nextMemoryCheck = DateTimeOffset.MinValue;
 
     // Confirmación de repetición: una sola lectura con la posición en 0 no basta, porque
     // mover la barra hacia atrás (o un fallo momentáneo del reproductor) también lo parece.
@@ -169,6 +171,55 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _log.Info("Configuración aplicada: se reinicia el monitor SMTC y se republica la actividad.");
     }
 
+    /// <summary>
+    /// Las referencias WinRT del bucle (sesiones, metadatos, miniaturas) solo se liberan en
+    /// un GC de gen2, y con un heap gestionado de ~2 MB puede no llegar nunca: la memoria
+    /// privada subía sin parar (480 MB tras unos minutos). Si supera 200 MB se fuerza una
+    /// recolección completa en segundo plano.
+    /// </summary>
+    private void MaybeTrimMemory()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now < _nextMemoryCheck)
+        {
+            return;
+        }
+
+        _nextMemoryCheck = now.AddSeconds(20);
+
+        long privateBytes;
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            privateBytes = process.PrivateMemorySize64;
+        }
+        catch
+        {
+            return;
+        }
+
+        if (privateBytes < 160L * 1024 * 1024)
+        {
+            return;
+        }
+
+        _log.Debug($"Memoria privada {privateBytes / (1024 * 1024)} MB; liberando referencias WinRT.");
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, blocking: false, compacting: false);
+            }
+            catch
+            {
+                // Nunca tumbar el bucle por una recolección.
+            }
+        });
+    }
+
     private async Task LoopAsync(CancellationToken cancellationToken)
     {
         try
@@ -177,6 +228,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             {
                 try
                 {
+                    MaybeTrimMemory();
+
                     if (Interlocked.Exchange(ref _restartMonitorRequested, 0) == 1)
                     {
                         _monitor.Reset();
