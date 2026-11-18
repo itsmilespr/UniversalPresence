@@ -23,10 +23,10 @@ public static class DiagnosticsRunner
     private static void PrintBanner(AppOptions options, CliOptions cli, Log log)
     {
         Console.WriteLine();
-        Console.WriteLine("Universal Presence — diagnóstico SMTC (sin lista blanca de reproductores)");
+        Console.WriteLine("Universal Presence — SMTC diagnostics (no player whitelist)");
         Console.WriteLine(new string('=', 88));
-        Console.WriteLine($"  Configuración    : {options.ConfigPath}");
-        Console.WriteLine($"  Carátulas        : {options.Artwork.ResolvedCacheDirectory}");
+        Console.WriteLine($"  Configuration    : {options.ConfigPath}");
+        Console.WriteLine($"  Covers            : {options.Artwork.ResolvedCacheDirectory}");
         Console.WriteLine($"  Registro         : {log.FilePath}");
         Console.WriteLine($"  Sondeo           : cada {options.PollIntervalMs} ms");
         Console.WriteLine($"  Tipo de actividad: {options.ActivityType}");
@@ -81,12 +81,12 @@ public static class DiagnosticsRunner
 
             if (engine.Paused)
             {
-                Console.WriteLine("  Aplicación pausada: no se publica nada en Discord.");
+                Console.WriteLine("  Application paused: nothing is published to Discord.");
             }
 
             if (snapshot is null)
             {
-                Console.WriteLine("  No hay ninguna sesión SMTC activa ahora mismo.");
+                Console.WriteLine("  No SMTC session is active right now.");
                 Console.WriteLine("  Abre un reproductor y dale a play (foobar2000 + Gatefold, Spotify, etc.).");
             }
             else
@@ -94,15 +94,15 @@ public static class DiagnosticsRunner
                 Console.WriteLine($"  Reproductor : {snapshot.PlayerName}   [AUMID: {Value(snapshot.AppUserModelId)}]");
                 Console.WriteLine($"  Origen      : {snapshot.PlayerNameSource}" +
                                   (string.IsNullOrWhiteSpace(snapshot.PlayerExecutable) ? "" : $" · {snapshot.PlayerExecutable}"));
-                Console.WriteLine($"  Estado      : {snapshot.Status}" + (snapshot.IsCurrentSession ? " (sesión actual de Windows)" : ""));
-                Console.WriteLine($"  Título      : {Value(snapshot.Title)}");
+                Console.WriteLine($"  Status      : {snapshot.Status}" + (snapshot.IsCurrentSession ? " (current Windows session)" : ""));
+                Console.WriteLine($"  Title       : {Value(snapshot.Title)}");
                 Console.WriteLine($"  Artista     : {Value(snapshot.Artist)}");
                 Console.WriteLine($"  Álbum       : {Value(snapshot.Album)}");
                 Console.WriteLine($"  Tiempo      : {FormatTime(snapshot.Position)} / {FormatTime(snapshot.Duration)}");
-                Console.WriteLine($"  Carátula    : {(snapshot.Artwork is null
-                    ? "sin carátula (se usará el icono de la app en Discord)"
+                Console.WriteLine($"  Cover       : {(snapshot.Artwork is null
+                    ? "no cover (the app icon will be used on Discord)"
                     : $"{snapshot.Artwork.ByteCount / 1024.0:0.0} KB {snapshot.Artwork.ContentType} → {snapshot.Artwork.FilePath}")}");
-                Console.WriteLine($"  Portada Discord: {snapshot.PublicArtworkUrl ?? "(sin URL pública; icono de la app)"}");
+                Console.WriteLine($"  Discord cover: {snapshot.PublicArtworkUrl ?? "(no public URL; app icon)"}");
                 Console.WriteLine($"  Formato     : start = ahora - posición (ms) · end = ahora + (duración - posición)");
             }
 
@@ -117,10 +117,10 @@ public static class DiagnosticsRunner
 
             if (engine.ImageProxyHint is { Length: > 0 } imageHint)
             {
-                Console.WriteLine($"  Aviso       : {imageHint} (Discord mostrará placeholder en las imágenes).");
+                Console.WriteLine($"  Note        : {imageHint} (Discord will show a placeholder for images).");
             }
 
-            Console.WriteLine($"  Actividad   : {(activity is null ? "(sin actividad: no se envía nada)" : activity.ToJson())}");
+            Console.WriteLine($"  Activity    : {(activity is null ? "(no activity: nothing is sent)" : activity.ToJson())}");
         }
 
         engine.Updated += PrintState;
@@ -136,11 +136,11 @@ public static class DiagnosticsRunner
         if (cli.Seconds > 0)
         {
             cancellation.CancelAfter(TimeSpan.FromSeconds(cli.Seconds));
-            Console.WriteLine($"Modo de prueba: terminará solo en {cli.Seconds} s (Ctrl+C para salir antes).");
+            Console.WriteLine($"Test mode: will end on its own in {cli.Seconds} s (Ctrl+C to exit earlier).");
         }
         else
         {
-            Console.WriteLine("Escuchando cambios de sesión… Ctrl+C para salir.");
+            Console.WriteLine("Listening for session changes… Ctrl+C to exit.");
         }
 
         try

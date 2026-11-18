@@ -28,9 +28,9 @@ public sealed class DiscordTokenService
             && !options.Artwork.IsDisabled)
         {
             _log.Warn(
-                "DiscordAccessToken es un token de BOT y Discord no deja convertir imágenes con " +
-                "bots (403 «Bots cannot use this endpoint»). Usa el icono de la bandeja → " +
-                "«Conectar con Discord… para conectar la cuenta y que las carátulas se vean.");
+                "DiscordAccessToken is a BOT token and Discord does not allow converting images with " +
+                "bots (403 «Bots cannot use this endpoint»). Use the tray icon → " +
+                "«Connect with Discord… to connect the account so covers show up.");
         }
     }
 
@@ -64,8 +64,8 @@ public sealed class DiscordTokenService
             }
 
             return _options.DiscordAccessToken.Trim().Length == 0
-                ? "sin cuenta conectada: Discord no muestra carátulas propias"
-                : "token de bot: Discord no permite proxear imágenes";
+                ? "no account connected: Discord does not show own covers"
+                : "bot token: Discord does not allow proxying images";
         }
     }
 
@@ -132,8 +132,8 @@ public sealed class DiscordTokenService
             }
 
             Apply(tokens);
-            _log.Info("Token OAuth2 renovado automáticamente (caduca en " +
-                      $"{TimeSpan.FromSeconds(tokens.ExpiresInSeconds).TotalDays:0.#} días).");
+            _log.Info("OAuth2 token renewed automatically (expires in " +
+                       $"{TimeSpan.FromSeconds(tokens.ExpiresInSeconds).TotalDays:0.#} days).");
             return true;
         }
         catch (OperationCanceledException)

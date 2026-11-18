@@ -65,7 +65,7 @@ public static class DiscordOAuth
         };
 
         AddSecret(form, clientSecret);
-        return PostAsync(form, "intercambio del código", cancellationToken);
+        return PostAsync(form, "code exchange", cancellationToken);
     }
 
     /// <summary>Renueva el access token sin volver a pedir permiso al usuario.</summary>
@@ -83,7 +83,7 @@ public static class DiscordOAuth
         };
 
         AddSecret(form, clientSecret);
-        return PostAsync(form, "renovación del token", cancellationToken);
+        return PostAsync(form, "token refresh", cancellationToken);
     }
 
     private static void AddSecret(Dictionary<string, string> form, string? clientSecret)
@@ -110,7 +110,7 @@ public static class DiscordOAuth
         if (!response.IsSuccessStatusCode)
         {
             throw new DiscordOAuthException(
-                $"Discord rechazó el {what} ({(int)response.StatusCode}): {Summarize(body)}");
+                $"Discord rejected the {what} ({(int)response.StatusCode}): {Summarize(body)}");
         }
 
         try
@@ -121,7 +121,7 @@ public static class DiscordOAuth
             var accessToken = root.TryGetProperty("access_token", out var access) ? access.GetString() : null;
             if (string.IsNullOrWhiteSpace(accessToken))
             {
-                throw new DiscordOAuthException($"Discord no devolvió access_token ({Summarize(body)}).");
+                throw new DiscordOAuthException($"Discord did not return access_token ({Summarize(body)}).");
             }
 
             var refreshToken = root.TryGetProperty("refresh_token", out var refresh) ? refresh.GetString() : null;

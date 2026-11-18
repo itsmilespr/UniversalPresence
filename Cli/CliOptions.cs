@@ -107,21 +107,21 @@ public sealed class CliOptions
               UniversalPresence.exe                 Icono en la bandeja del sistema (sin ventana).
               UniversalPresence.exe --test          Modo de prueba: imprime todo lo que detecta SMTC.
               UniversalPresence.exe --list           Vuelca las sesiones SMTC y termina.
-              UniversalPresence.exe --settings       Arranca en la bandeja y abre la configuración.
+              UniversalPresence.exe --settings       Starts in the tray and opens the settings.
               UniversalPresence.exe --test --dry-run --seconds 20
                                                      Prueba sin Discord, terminando sola a los 20 s.
 
             OPCIONES
-              --client-id <id>   Id de la aplicación de Discord (sobrescribe la configuración).
+              --client-id <id>   Discord application id (overrides the configuration).
               --config <ruta>    Ruta alternativa a config.json.
               --paused           Arranca pausado (sin publicar en Discord).
               --verbose          Registro detallado.
-              --seconds <n>      En modo --test/--console, termina después de n segundos.
+              --seconds <n>      In --test/--console mode, exits after n seconds.
               -h, --help         Esta ayuda.
 
-            El archivo de configuración se crea solo en:
+            The configuration file is created only at:
               %APPDATA%\UniversalPresence\config.json
-            Los registros y las carátulas se guardan en:
+            Logs and covers are stored at:
               %LOCALAPPDATA%\UniversalPresence\
             """);
     }

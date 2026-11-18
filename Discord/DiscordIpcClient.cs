@@ -123,7 +123,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                 return client;
             }
 
-            log.Debug($"Discord no aceptó el handshake en {pipeName}.");
+            log.Debug($"Discord did not accept the handshake on {pipeName}.");
         }
         catch (Exception ex)
         {
@@ -171,7 +171,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
 
                 if (length < 0 || length > MaxFrameBytes)
                 {
-                    throw new InvalidDataException($"Frame IPC de Discord inválido ({length} bytes).");
+                    throw new InvalidDataException($"Invalid Discord IPC frame ({length} bytes).");
                 }
 
                 var payload = length == 0 ? Array.Empty<byte>() : new byte[length];
@@ -191,7 +191,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
         {
             if (!_cts.IsCancellationRequested)
             {
-                _log.Debug($"Conexión IPC con Discord finalizada: {ex.Message}");
+                _log.Debug($"IPC connection with Discord ended: {ex.Message}");
             }
         }
         finally
@@ -215,7 +215,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                 return;
 
             case OpClose:
-                throw new IOException("Discord cerró la conexión IPC.");
+                throw new IOException("Discord closed the IPC connection.");
 
             case OpFrame:
                 break;
@@ -245,7 +245,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                 // Discord acknowledges accepted commands without an event name.
                 if (string.Equals(command, "SET_ACTIVITY", StringComparison.Ordinal))
                 {
-                    _log.Debug("Discord confirmó SET_ACTIVITY (actividad aceptada).");
+                    _log.Debug("Discord confirmed SET_ACTIVITY (activity accepted).");
                 }
 
                 return;
@@ -259,7 +259,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                     break;
 
                 case "ERROR":
-                    _log.Warn($"Discord devolvió un error al handshake: {root.GetRawText()}");
+                    _log.Warn($"Discord returned an error on handshake: {root.GetRawText()}");
                     _ready.TrySetResult(false);
                     break;
             }
@@ -309,7 +309,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
             var read = await _pipe.ReadAsync(buffer[offset..], cancellationToken).ConfigureAwait(false);
             if (read == 0)
             {
-                throw new EndOfStreamException("Discord cerró el pipe IPC.");
+                throw new EndOfStreamException("Discord closed the IPC pipe.");
             }
 
             offset += read;

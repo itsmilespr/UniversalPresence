@@ -168,7 +168,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         Interlocked.Exchange(ref _restartMonitorRequested, 1);
         _signal.Set();
         Updated?.Invoke();
-        _log.Info("Configuración aplicada: se reinicia el monitor SMTC y se republica la actividad.");
+        _log.Info("Settings applied: restarting the SMTC monitor and republishing the activity.");
     }
 
     /// <summary>

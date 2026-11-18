@@ -57,7 +57,7 @@ public sealed class UpdateService : IDisposable
         using var response = await Http.SendAsync(request, _cts.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            _log.Debug($"GitHub respondió {(int)response.StatusCode} al buscar actualizaciones.");
+            _log.Debug($"GitHub responded {(int)response.StatusCode} while checking for updates.");
             return null;
         }
 
@@ -77,7 +77,7 @@ public sealed class UpdateService : IDisposable
 
         if (!Version.TryParse(tag.TrimStart('v', 'V'), out var version))
         {
-            _log.Debug($"La release '{tag}' no tiene una versión reconocible.");
+            _log.Debug($"Release '{tag}' has no recognizable version.");
             return null;
         }
 
@@ -85,7 +85,7 @@ public sealed class UpdateService : IDisposable
 
         if (version.CompareTo(CurrentVersion) <= 0)
         {
-            _log.Debug($"Sin actualizaciones: la última es {version} y la actual {CurrentVersion}.");
+            _log.Debug($"No updates: latest is {version}, current is {CurrentVersion}.");
             return null;
         }
 
@@ -123,7 +123,7 @@ public sealed class UpdateService : IDisposable
             }
 
             _available = new UpdateInfo(version, tag, downloadUrl, size, sha256);
-            _log.Info($"Actualización disponible: {tag} ({size / 1048576.0:0.0} MB).");
+            _log.Info($"Update available: {tag} ({size / 1048576.0:0.0} MB).");
             return _available;
         }
 
@@ -154,7 +154,7 @@ public sealed class UpdateService : IDisposable
 
             if (length < MinExpectedBytes || (info.Size > 0 && length != info.Size))
             {
-                _log.Warn($"La descarga no tiene el tamaño esperado ({length} bytes de {info.Size}).");
+                _log.Warn($"Download size mismatch ({length} bytes of {info.Size}).");
                 File.Delete(temp);
                 return null;
             }
@@ -169,17 +169,17 @@ public sealed class UpdateService : IDisposable
                     return null;
                 }
 
-                _log.Info("SHA-256 de la actualización verificado.");
+                _log.Info("Update SHA-256 verified.");
             }
             else
             {
-                _log.Warn("La release no publica SHA-256; se comprueba solo el tamaño.");
+                _log.Warn("Release does not publish SHA-256; only size is checked.");
             }
 
             File.Move(temp, target, true);
             _downloadedPath = target;
             DeleteOlderDownloads(target);
-            _log.Info($"Actualización descargada: {target}");
+            _log.Info($"Update downloaded: {target}");
             return target;
         }
         catch (OperationCanceledException)
@@ -189,7 +189,7 @@ public sealed class UpdateService : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Warn($"No se pudo descargar la actualización: {ex.Message}");
+            _log.Warn($"Could not download the update: {ex.Message}");
             TryDelete(temp);
             return null;
         }

@@ -210,8 +210,8 @@ public sealed class DiscordCallbackListener : IDisposable
     {
         var title = ok ? "Cuenta conectada" : "No se pudo conectar";
         var detail = ok
-            ? "Ya puedes cerrar esta pestaña y volver a Universal Presence. Las carátulas y el icono del reproductor aparecerán en tu perfil de Discord."
-            : WebUtility.HtmlEncode(error ?? "Discord no devolvió un código de autorización. Vuelve a intentarlo desde la aplicación.");
+            ? "You can now close this tab and return to Universal Presence. Covers and the player icon will appear on your Discord profile."
+            : WebUtility.HtmlEncode(error ?? "Discord did not return an authorization code. Try again from the application.");
 
         return $$"""
                 <!DOCTYPE html>

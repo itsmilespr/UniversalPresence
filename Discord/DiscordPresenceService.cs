@@ -104,7 +104,7 @@ public sealed class DiscordPresenceService : IAsyncDisposable
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                _log.Debug("Actualización descartada: llegó una más nueva antes de enviarla.");
+                _log.Debug("Update discarded: a newer one arrived before it was sent.");
                 return false;
             }
 

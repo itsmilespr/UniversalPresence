@@ -35,7 +35,7 @@ internal static class Program
 
         try
         {
-            log.Info($"Universal Presence {typeof(Program).Assembly.GetName().Version} · configuración: {options.ConfigPath}");
+            log.Info($"Universal Presence {typeof(Program).Assembly.GetName().Version} · configuration: {options.ConfigPath}");
 
             if (cli.ConsoleMode)
             {
@@ -58,7 +58,7 @@ internal static class Program
 
         if (!instance.IsFirst)
         {
-            log.Info("Ya hay una instancia de Universal Presence en ejecución; saliendo.");
+            log.Info("Another instance of Universal Presence is already running; exiting.");
             return 0;
         }
 
@@ -69,14 +69,14 @@ internal static class Program
         // A background app must not vanish on an unexpected UI exception: log it and keep going.
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, eventArgs) =>
-            log.Error("Excepción no controlada en la interfaz.", eventArgs.Exception);
+            log.Error("Unhandled exception in the UI.", eventArgs.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
-            log.Error("Excepción no controlada.", eventArgs.ExceptionObject as Exception);
+            log.Error("Unhandled exception.", eventArgs.ExceptionObject as Exception);
 
         using var context = new TrayApplicationContext(options, log, cli.Settings);
         Application.Run(context);
 
-        log.Info("Aplicación finalizada.");
+        log.Info("Application finished.");
         return 0;
     }
 }

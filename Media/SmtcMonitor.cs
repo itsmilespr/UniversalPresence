@@ -96,7 +96,7 @@ public sealed class SmtcMonitor : IDisposable
         ClearWatches();
         ResetSnapshots();
 
-        _log.Info("Monitor SMTC reiniciado (configuración actualizada).");
+        _log.Info("SMTC monitor restarted (settings updated).");
     }
 
     public async Task<bool> EnsureStartedAsync(CancellationToken cancellationToken)
@@ -119,7 +119,7 @@ public sealed class SmtcMonitor : IDisposable
             manager.SessionsChanged += OnSessionsChanged;
             manager.CurrentSessionChanged += OnCurrentSessionChanged;
             _manager = manager;
-            _log.Info("SMTC listo: detección universal activa (sin lista blanca de reproductores).");
+            _log.Info("SMTC ready: universal detection active (no player whitelist).");
             return true;
         }
         catch (OperationCanceledException)
@@ -133,7 +133,7 @@ public sealed class SmtcMonitor : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Warn($"SMTC no disponible todavía: {ex.Message}");
+            _log.Warn($"SMTC not available yet: {ex.Message}");
             return false;
         }
         finally
@@ -177,7 +177,7 @@ public sealed class SmtcMonitor : IDisposable
             }
             catch (Exception ex)
             {
-                _log.Debug($"No se pudo leer una sesión SMTC: {ex.Message}");
+                _log.Debug($"Could not read an SMTC session: {ex.Message}");
             }
         }
 
@@ -264,7 +264,7 @@ public sealed class SmtcMonitor : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Debug($"No se pudo releer la sesión al reanudar: {ex.Message}");
+            _log.Debug($"Could not re-read the session on resume: {ex.Message}");
             return null;
         }
     }
@@ -296,7 +296,7 @@ public sealed class SmtcMonitor : IDisposable
                 if (_options.IsIgnoredPlayer(aumid, identity.Name, identity.ExecutablePath, identity.FileName))
                 {
                     _log.Debug(
-                        $"Sesión ignorada por IgnoredPlayers: AUMID '{aumid}', reproductor '{identity.Name}'.");
+                        $"Session ignored by IgnoredPlayers: AUMID '{aumid}', player '{identity.Name}'.");
                     return null;
                 }
 
@@ -361,13 +361,13 @@ public sealed class SmtcMonitor : IDisposable
             {
                 // SMTC reads race with the player updating its metadata; one retry is
                 // enough in practice and avoids dropping the session from the activity.
-                _log.Debug($"Lectura SMTC falló, reintentando ({ex.GetType().Name}, 0x{ex.HResult:X8}).");
+                _log.Debug($"SMTC read failed, retrying ({ex.GetType().Name}, 0x{ex.HResult:X8}).");
                 await Task.Delay(60, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 _log.Debug(
-                    $"Sesión SMTC '{aumid}' ilegible ({ex.GetType().Name}, 0x{ex.HResult:X8}): '{ex.Message}'");
+                    $"SMTC session '{aumid}' unreadable ({ex.GetType().Name}, 0x{ex.HResult:X8}): '{ex.Message}'");
                 return null;
             }
         }

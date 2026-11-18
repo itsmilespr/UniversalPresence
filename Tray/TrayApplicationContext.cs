@@ -105,7 +105,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _engine.Updated += OnEngineUpdated;
         _engine.Start();
 
-        _log.Info("Icono de bandeja creado; esperando sesiones SMTC.");
+        _log.Info("Tray icon created; waiting for SMTC sessions.");
 
         WindowsAutostart.Apply(_options.StartWithWindows);
 
@@ -155,7 +155,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _log.Error("No se pudo abrir la configuración.", ex);
+            _log.Error("Could not open the settings.", ex);
             MessageBox.Show(
                 string.Format(_ui.OpenSettingsFailed, ex.Message),
                 _ui.AppName,
@@ -318,7 +318,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            _log.Warn($"No se pudo comprobar la actualización: {ex.Message}");
+            _log.Warn($"Could not check for updates: {ex.Message}");
 
             if (manual)
             {
