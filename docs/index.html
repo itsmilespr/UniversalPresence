@@ -35,7 +35,10 @@
 
   body {
     margin: 0;
-    background: var(--bg);
+    background:
+      radial-gradient(900px 420px at 18% -10%, rgba(124,108,255,.22), transparent 62%),
+      radial-gradient(700px 360px at 86% 0%, rgba(79,140,255,.16), transparent 65%),
+      var(--bg);
     color: var(--text);
     font-family: "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
     line-height: 1.6;
@@ -465,9 +468,10 @@
   }
 
   .card:hover {
-    border-color: rgba(124, 108, 255, .38);
-    transform: translateY(-2px);
-    background: linear-gradient(180deg, rgba(124, 108, 255, .08), rgba(255, 255, 255, .015));
+    border-color: rgba(124, 108, 255, .48);
+    transform: translateY(-3px);
+    background: linear-gradient(180deg, rgba(124, 108, 255, .12), rgba(255, 255, 255, .02));
+    box-shadow: 0 18px 40px rgba(0,0,0,.35);
   }
 
   .icon {
@@ -743,7 +747,7 @@
   <div class="wrap">
     <section class="hero" style="padding-bottom:84px">
       <div>
-        <p class="eyebrow"><span class="pulse"></span> v1.4.5 · Windows 10 and 11</p>
+        <p class="eyebrow"><span class="pulse"></span> v1.6.0 · Windows 10 and 11</p>
         <h1>Your music on Discord.<br><span class="grad">Any player.</span></h1>
         <p class="lede">
           Universal Presence reads what Windows is playing —Spotify, foobar2000, VLC,
@@ -924,7 +928,7 @@
       <div class="download-card">
         <img class="big" src="assets/icon.png" alt="" width="76" height="76">
         <div class="download-copy">
-          <h2>Universal Presence 1.4.5</h2>
+          <h2>Universal Presence 1.6.0</h2>
           <p>Download the executable, open it and play. Nothing else.</p>
           <div class="chips">
             <span class="chip">Windows 10 / 11</span>
