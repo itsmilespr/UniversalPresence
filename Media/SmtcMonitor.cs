@@ -304,6 +304,13 @@ public sealed class SmtcMonitor : IDisposable
 
                 var media = await GetMediaPropertiesAsync(session, aumid, cancellationToken).ConfigureAwait(false);
 
+                // Los navegadores (Brave, Chrome, Edge, Firefox…) exponen como miniatura
+                // de SMTC su propio icono o el favicon del sitio, no la portada real del
+                // álbum. Si usamos esa miniatura, Discord muestra el icono del navegador
+                // en lugar de la carátula. Para ellos se ignora la miniatura y se deja
+                // que la búsqueda en catálogo (iTunes/Deezer) ponga la portada real.
+                var isBrowser = IsBrowserPlayer(aumid, identity);
+
                 var title = Clean(media?.Title);
                 var artist = Clean(media?.Artist);
                 var albumArtist = Clean(media?.AlbumArtist);
@@ -329,7 +336,8 @@ public sealed class SmtcMonitor : IDisposable
                 var (position, duration, lastUpdated) = ReadTimelineCached(
                     session, aumid, status, projectPosition, force: !projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
-                var artwork = await _artwork.GetAsync(media?.Thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
+                var thumbnail = isBrowser ? null : media?.Thumbnail;
+                var artwork = await _artwork.GetAsync(thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
 
                 if (aumid.Length > 0)
                 {
@@ -506,6 +514,48 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         return (position, cache.Duration, cache.LastUpdated);
+    }
+
+    /// <summary>
+    /// Detecta si la sesión proviene de un navegador web. Los navegadores exponen como
+    /// miniatura SMTC su propio icono o el favicon del sitio, no la portada real del álbum;
+    /// en ese caso se ignora la miniatura para dejar que la búsqueda en catálogo ponga
+    /// la portada correcta.
+    /// </summary>
+    private static bool IsBrowserPlayer(string aumid, PlayerIdentity identity)
+    {
+        var aumidLower = (aumid ?? string.Empty).ToLowerInvariant();
+        var nameLower = (identity.Name ?? string.Empty).ToLowerInvariant();
+        var execLower = (identity.ExecutablePath ?? string.Empty).ToLowerInvariant();
+        var fileLower = (identity.FileName ?? string.Empty).ToLowerInvariant();
+
+        string[] browserKeywords =
+        {
+            "brave", "chrome", "chromium", "msedge", "edge", "firefox", "opera",
+            "vivaldi", "arc", "safari", "waterfox", "librewolf", "tor", "yandex",
+            "duckduckgo", "whale", "naver"
+        };
+
+        foreach (var kw in browserKeywords)
+        {
+            if (aumidLower.Contains(kw, StringComparison.Ordinal)
+                || nameLower.Contains(kw, StringComparison.Ordinal)
+                || execLower.Contains(kw, StringComparison.Ordinal)
+                || fileLower.Contains(kw, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        // AUMIDs típicos de navegadores empaquetados.
+        if (aumidLower.Contains("microsoft.microsoftedge", StringComparison.Ordinal)
+            || aumidLower.Contains("google.chrome", StringComparison.Ordinal)
+            || aumidLower.Contains("mozilla.firefox", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private sealed class PlaybackCache
