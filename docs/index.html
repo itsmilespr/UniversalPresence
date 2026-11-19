@@ -747,7 +747,7 @@
   <div class="wrap">
     <section class="hero" style="padding-bottom:84px">
       <div>
-        <p class="eyebrow"><span class="pulse"></span> v1.6.0 · Windows 10 and 11</p>
+        <p class="eyebrow"><span class="pulse"></span> <span data-version>v1.6.0</span> · Windows 10 and 11</p>
         <h1>Your music on Discord.<br><span class="grad">Any player.</span></h1>
         <p class="lede">
           Universal Presence reads what Windows is playing —Spotify, foobar2000, VLC,
@@ -928,7 +928,7 @@
       <div class="download-card">
         <img class="big" src="assets/icon.png" alt="" width="76" height="76">
         <div class="download-copy">
-          <h2>Universal Presence 1.6.0</h2>
+          <h2 data-version-title>Universal Presence 1.6.0</h2>
           <p>Download the executable, open it and play. Nothing else.</p>
           <div class="chips">
             <span class="chip">Windows 10 / 11</span>
@@ -964,5 +964,19 @@
   </div>
 </footer>
 
+<script>
+  (function () {
+    fetch('https://api.github.com/repos/itsmilespr/UniversalPresence/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.tag_name) return;
+        var version = String(data.tag_name).replace(/^v/, '');
+        if (!version) return;
+        document.querySelectorAll('[data-version]').forEach(function (el) { el.textContent = 'v' + version; });
+        document.querySelectorAll('[data-version-title]').forEach(function (el) { el.textContent = 'Universal Presence ' + version; });
+      })
+      .catch(function () {});
+  })();
+</script>
 </body>
 </html>

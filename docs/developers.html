@@ -134,7 +134,7 @@
 
 <main class="wrap">
   <section class="hero">
-    <p class="eyebrow"><span class="pulse"></span> Developer guide · v1.6.0</p>
+    <p class="eyebrow"><span class="pulse"></span> Developer guide · <span data-version>v1.6.0</span></p>
     <h1>Build, extend and publish <span class="grad">Universal Presence</span></h1>
     <p class="lede">
       This guide explains the whole project: how Windows media sessions become a Discord activity,
@@ -513,5 +513,18 @@ public sealed class MyPlugin : IUniversalPresencePlugin
     <a href="https://github.com/itsmilespr/UniversalPresence/issues">Support</a>
   </div>
 </footer>
+<script>
+  (function () {
+    fetch('https://api.github.com/repos/itsmilespr/UniversalPresence/releases/latest')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data || !data.tag_name) return;
+        var version = String(data.tag_name).replace(/^v/, '');
+        if (!version) return;
+        document.querySelectorAll('[data-version]').forEach(function (el) { el.textContent = 'v' + version; });
+      })
+      .catch(function () {});
+  })();
+</script>
 </body>
 </html>
