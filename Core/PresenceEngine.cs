@@ -212,7 +212,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return;
         }
 
-        if (privateBytes < 120L * 1024 * 1024)
+        if (privateBytes < 90L * 1024 * 1024)
         {
             return;
         }

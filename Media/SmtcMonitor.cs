@@ -30,10 +30,10 @@ public sealed class SmtcMonitor : IDisposable
     // reproductores que no los emiten. Cuanto más largos, menos objetos WinRT se crean.
     // TTLs más cortos: la latencia al cambiar de canción importa más que ahorrar
     // unos MB de objetos WinRT (el GC ya los limpia periódicamente).
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(3);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
@@ -371,7 +371,7 @@ public sealed class SmtcMonitor : IDisposable
                         isReal = await IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken).ConfigureAwait(false);
                         lock (_metadataGate)
                         {
-                            if (_coverDecisionCache.Count > 512) _coverDecisionCache.Clear();
+                            if (_coverDecisionCache.Count > 128) _coverDecisionCache.Clear();
                             _coverDecisionCache[cacheKey] = isReal;
                         }
                         _log.Debug($"Portada de navegador para '{aumid}': {(isReal ? "real (>=200 px)" : "ignorada (icono/favicon)")}");

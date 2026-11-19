@@ -175,9 +175,12 @@ public sealed class SettingsForm : Form
             BackColor = PageBg,
         };
 
-        Controls.Add(_tabs);
-        Controls.Add(hint);
+        // El panel Fill se añade al final para que los paneles inferiores (botones/pista)
+        // queden por encima y no tapen los controles de las pestañas.
         Controls.Add(buttons);
+        Controls.Add(hint);
+        Controls.Add(_tabs);
+        _tabs.BringToFront();
 
         AcceptButton = saveButton;
         CancelButton = cancelButton;

@@ -74,7 +74,7 @@ public sealed class ArtworkCache
 
         lock (_gate)
         {
-            if (_memo.Count > 128)
+            if (_memo.Count > 64)
             {
                 _memo.Clear();
             }
