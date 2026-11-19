@@ -1,5 +1,5 @@
 #define MyAppName "Universal Presence"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.6.1"
 #define MyAppPublisher "itsmilespr"
 #define MyAppURL "https://github.com/itsmilespr/UniversalPresence"
 #define MyAppExeName "UniversalPresence.exe"

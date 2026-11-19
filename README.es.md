@@ -105,7 +105,7 @@ etiqueta `v*` se publica la release con el `.exe` adjunto.
 
 Universal Presence no tiene servidores ni cuentas. Solo escribe en tu equipo y habla con Discord
 por su canal local. Para que Discord pueda mostrar la carátula extraída, la sube a Litterbox
-(catbox.moe); se puede desactivar con `"Artwork": { "UploadMode": "None" }`. Para buscar una
+(catbox.moe), Imgur o un host propio permanente (`"UploadMode": "SelfHosted"` con `UploadUrl` y `UploadApiKey`); se puede desactivar con `"Artwork": { "UploadMode": "None" }`. Para buscar una
 portada cuando el reproductor no la ofrece, envía título/artista/álbum a las API públicas de
 iTunes y Deezer; se puede desactivar con `"Artwork": { "Mode": "None" }`. Para actualizarse,
 consulta la API pública de GitHub al arrancar y cada 6 h (sin cuenta ni token); se puede

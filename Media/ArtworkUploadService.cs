@@ -349,14 +349,13 @@ public sealed class ArtworkUploadService
 
         var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
 
-        using var form = new MultipartFormDataContent();
-        var file = new ByteArrayContent(bytes);
-        file.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
-        form.Add(file, "file", artwork.FileName);
+        // Raw image body: simpler and immune to multipart parser quirks at the host.
+        var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/upload")
         {
-            Content = form,
+            Content = content,
         };
         request.Headers.Add("X-Upload-Token", token);
 
@@ -364,7 +363,10 @@ public sealed class ArtworkUploadService
 
         if (!response.IsSuccessStatusCode)
         {
-            _log.Warn($"El host propio respondió {(int)response.StatusCode} al subir la carátula.");
+            var error = (await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false)).Trim();
+            _log.Warn(
+                $"El host propio respondió {(int)response.StatusCode} al subir la carátula" +
+                (error.Length > 0 && error.Length <= 160 ? $" («{error}»)" : "") + ".");
             return null;
         }
 

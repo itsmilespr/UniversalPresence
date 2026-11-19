@@ -26,25 +26,37 @@ export default {
         return new Response("Unauthorized", { status: 401 });
       }
 
-      let form;
-      try {
-        form = await request.formData();
-      } catch {
-        return new Response("Invalid form data", { status: 400 });
+      const declaredType = (request.headers.get("content-type") || "").split(";")[0].trim();
+      let body;
+      let type;
+
+      if (declaredType.startsWith("image/")) {
+        // Raw image body: the desktop app sends the cover bytes directly.
+        type = declaredType;
+        body = await request.arrayBuffer();
+      } else {
+        let form;
+        try {
+          form = await request.formData();
+        } catch {
+          return new Response("Invalid form data", { status: 400 });
+        }
+
+        const file = form.get("file");
+        if (!file || typeof file === "string") {
+          return new Response("Missing file", { status: 400 });
+        }
+
+        type = file.type || "image/jpeg";
+        body = await file.arrayBuffer();
       }
 
-      const file = form.get("file");
-      if (!file || typeof file === "string") {
-        return new Response("Missing file", { status: 400 });
-      }
-
-      if (file.size > 10 * 1024 * 1024) {
-        return new Response("File too large", { status: 413 });
-      }
-
-      const type = file.type || "image/jpeg";
       if (!type.startsWith("image/")) {
         return new Response("Not an image", { status: 415 });
+      }
+
+      if (body.byteLength === 0 || body.byteLength > 10 * 1024 * 1024) {
+        return new Response("File too large", { status: 413 });
       }
 
       const extension =
@@ -53,7 +65,7 @@ export default {
         type.includes("gif") ? "gif" : "jpg";
 
       const key = `${crypto.randomUUID()}.${extension}`;
-      await env.FILES.put(key, file.stream(), {
+      await env.FILES.put(key, body, {
         httpMetadata: { contentType: type },
       });
 
