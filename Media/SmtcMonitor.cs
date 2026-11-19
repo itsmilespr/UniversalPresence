@@ -1,6 +1,9 @@
+using System.Drawing;
+using System.IO;
 using UniversalPresence.Configuration;
 using UniversalPresence.Infrastructure;
 using Windows.Media.Control;
+using Windows.Storage.Streams;
 
 namespace UniversalPresence.Media;
 
@@ -310,6 +313,7 @@ public sealed class SmtcMonitor : IDisposable
                 // en lugar de la carátula. Para ellos se ignora la miniatura y se deja
                 // que la búsqueda en catálogo (iTunes/Deezer) ponga la portada real.
                 var isBrowser = IsBrowserPlayer(aumid, identity);
+                var isTikTok = IsTikTokPlayer(aumid, identity);
 
                 var title = Clean(media?.Title);
                 var artist = Clean(media?.Artist);
@@ -336,7 +340,27 @@ public sealed class SmtcMonitor : IDisposable
                 var (position, duration, lastUpdated) = ReadTimelineCached(
                     session, aumid, status, projectPosition, force: !projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
-                var thumbnail = isBrowser ? null : media?.Thumbnail;
+                // Los navegadores exponen como miniatura SMTC su propio icono o el favicon del
+                // sitio, no la portada real. Se ignora esa miniatura por defecto, pero si la
+                // imagen es lo bastante grande (>= 200 px) se asume que es una portada real
+                // (p. ej. TikTok u otros sitios que sí rellenan el artwork del Media Session)
+                // y se conserva para que se suba/muestre.
+                IRandomAccessStreamReference? thumbnail;
+                if (isTikTok)
+                {
+                    // TikTok no está en los catálogos: se confía en su miniatura SMTC.
+                    thumbnail = media?.Thumbnail;
+                }
+                else if (isBrowser)
+                {
+                    thumbnail = await IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken).ConfigureAwait(false)
+                        ? media?.Thumbnail
+                        : null;
+                }
+                else
+                {
+                    thumbnail = media?.Thumbnail;
+                }
                 var artwork = await _artwork.GetAsync(thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
 
                 if (aumid.Length > 0)
@@ -556,6 +580,77 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Detecta si la sesión proviene de TikTok (app nativa o pestaña del navegador).
+    /// TikTok no suele estar en los catálogos de música, así que su portada solo puede
+    /// venir de la miniatura SMTC (el vídeo) y se confía en ella aunque sea pequeña.
+    /// </summary>
+    private static bool IsTikTokPlayer(string aumid, PlayerIdentity identity)
+    {
+        var aumidLower = (aumid ?? string.Empty).ToLowerInvariant();
+        var nameLower = (identity.Name ?? string.Empty).ToLowerInvariant();
+        var execLower = (identity.ExecutablePath ?? string.Empty).ToLowerInvariant();
+        var fileLower = (identity.FileName ?? string.Empty).ToLowerInvariant();
+
+        foreach (var value in new[] { aumidLower, nameLower, execLower, fileLower })
+        {
+            if (value.Contains("tiktok", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Comprueba si la miniatura SMTC de un navegador es una portada real (y no un icono
+    /// o favicon pequeño). Los navegadores que rellenan el artwork del Media Session (p. ej.
+    /// TikTok) suelen entregar imágenes grandes; los favicons/iconos del navegador son
+    /// pequeños. Si no se puede leer o es pequeña, se descarta.
+    /// </summary>
+    private static async Task<bool> IsRealCoverThumbnailAsync(
+        IRandomAccessStreamReference? reference,
+        CancellationToken cancellationToken)
+    {
+        if (reference is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var stream = await reference.OpenReadAsync().AsTask(cancellationToken).ConfigureAwait(false);
+            if (stream is null || stream.Size == 0 || stream.Size > 8 * 1024 * 1024)
+            {
+                return false;
+            }
+
+            stream.Seek(0);
+            var size = (uint)stream.Size;
+            var bytes = new byte[size];
+
+            using (var reader = new DataReader(stream.GetInputStreamAt(0)))
+            {
+                var loaded = await reader.LoadAsync(size).AsTask(cancellationToken).ConfigureAwait(false);
+                if (loaded == 0)
+                {
+                    return false;
+                }
+
+                reader.ReadBytes(bytes);
+            }
+
+            using var ms = new MemoryStream(bytes);
+            using var image = Image.FromStream(ms);
+            return image.Width >= 200 && image.Height >= 200;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private sealed class PlaybackCache
