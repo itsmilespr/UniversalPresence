@@ -15,7 +15,7 @@ namespace UniversalPresence.Infrastructure;
 /// </summary>
 public sealed class PersistentCache
 {
-    private const string CacheVersion = "3";
+    private const string CacheVersion = "4";
     private const int MaxEntries = 3000;
 
     private static readonly TimeSpan DefaultSuccessTtl = TimeSpan.FromDays(14);

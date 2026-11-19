@@ -60,6 +60,21 @@ public sealed class Log : IDisposable
         return new Log(level, console, writer, filePath, directory);
     }
 
+    /// <summary>
+    /// Instancia sin escritor, para que otra ventana (el visor de registro) pueda leer el
+    /// archivo y generar el diagnóstico sin abrir un segundo escritor sobre el mismo log.
+    /// </summary>
+    public static Log ForReading()
+    {
+        var directory = Path.Combine(AppOptions.LocalDataDirectory, "logs");
+        return new Log(
+            LogLevel.Debug,
+            console: false,
+            writer: null,
+            Path.Combine(directory, "presence.log"),
+            directory);
+    }
+
     public void Debug(string message) => Write(LogLevel.Debug, message);
 
     public void Info(string message) => Write(LogLevel.Info, message);

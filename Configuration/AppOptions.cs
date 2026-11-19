@@ -185,6 +185,35 @@ public sealed class AppOptions
     /// <summary>Guarda un historial local de lo escuchado (JSON Lines).</summary>
     public bool ListeningHistory { get; set; } = true;
 
+    /// <summary>
+    /// Oculta la presencia cuando el equipo está bloqueado o el usuario lleva
+    /// <see cref="IdleSeconds"/> sin tocar el teclado ni el ratón. Al volver, se republica
+    /// sola la canción en curso.
+    /// </summary>
+    public bool ClearWhenIdle { get; set; }
+
+    /// <summary>Segundos sin actividad antes de considerar al usuario ausente.</summary>
+    public int IdleSeconds { get; set; } = 600;
+
+    /// <summary>
+    /// Si la posición real se desvía de la que Discord está dibujando (un reproductor que
+    /// no emite eventos, un seek que no avisó), se reenvían los timestamps para que la
+    /// barra no quede desfasada.
+    /// </summary>
+    public bool ResyncProgressDrift { get; set; } = true;
+
+    /// <summary>stable | beta. Beta incluye las releases marcadas como pre-release.</summary>
+    public string UpdateChannel { get; set; } = "stable";
+
+    /// <summary>
+    /// Portada propia por aplicación (clave = nombre del reproductor o AppUserModelId).
+    /// Valor = URL https de imagen o ruta de un archivo local jpg/png/webp.
+    /// </summary>
+    public Dictionary<string, string> CoverOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Publica «escuchando ahora» en Last.fm al empezar cada pista.</summary>
+    public bool LastFmNowPlaying { get; set; } = true;
+
     /// <summary>Nombre del perfil activo (configuración guardada en profiles/).</summary>
     public string ActiveProfile { get; set; } = "default";
 
@@ -205,6 +234,21 @@ public sealed class AppOptions
     /// <summary>Token de sesión de Last.fm (se obtiene autorizando una vez).</summary>
     [JsonIgnore]
     public string LastFmSessionKey { get; set; } = "";
+
+    /// <summary>
+    /// Portada propia por canción. La clave es la que genera
+    /// <see cref="Infrastructure.TextMatch.TrackKey(string?, string?)"/>; si la canción no
+    /// tiene artista se puede fijar solo por título. Tiene prioridad sobre la portada de
+    /// la aplicación y sobre la búsqueda en catálogo.
+    /// </summary>
+    public Dictionary<string, string> TrackCoverOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Plantillas de presencia por reproductor (clave = AppUserModelId o nombre del
+    /// reproductor). Cada campo vacío cae a la plantilla global y después al valor por
+    /// defecto, así que solo hay que rellenar lo que se quiera cambiar.
+    /// </summary>
+    public Dictionary<string, PresenceTemplate> PlayerTemplates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Muestra la ventana flotante "now playing".</summary>
     public bool ShowOverlay { get; set; }
@@ -243,7 +287,7 @@ public sealed class AppOptions
     public string PlayerAssetKey { get; set; } = "";
 
     /// <summary>Schema version for config migration.</summary>
-    public int ConfigVersion { get; set; } = 2;
+    public int ConfigVersion { get; set; } = 3;
 
     public ArtworkOptions Artwork { get; set; } = new();
 
@@ -401,9 +445,9 @@ public sealed class AppOptions
         if (string.IsNullOrWhiteSpace(options.LastFmSessionKey)) options.LastFmSessionKey = legacyLastFmSession;
 
         // Migraciones por versión.
-        if (legacyVersion < 2)
+        if (legacyVersion < 3)
         {
-            options.ConfigVersion = 2;
+            options.ConfigVersion = 3;
         }
 
         LoadSecrets(options);
@@ -443,6 +487,8 @@ public sealed class AppOptions
         MinUpdateIntervalMs = Math.Clamp(MinUpdateIntervalMs, 1_000, 60_000);
         HeartbeatSeconds = Math.Clamp(HeartbeatSeconds, 0, 3_600);
         PauseRefreshSeconds = Math.Clamp(PauseRefreshSeconds, 0, 120);
+        IdleSeconds = Math.Clamp(IdleSeconds, 30, 86_400);
+        UpdateChannel = string.Equals(UpdateChannel, "beta", StringComparison.OrdinalIgnoreCase) ? "beta" : "stable";
         DiscordClientId = DiscordClientId?.Trim() ?? "";
         DiscordAccessToken = DiscordAccessToken?.Trim() ?? "";
         DiscordRefreshToken = DiscordRefreshToken?.Trim() ?? "";
@@ -473,6 +519,47 @@ public sealed class AppOptions
         }
 
         PlayerNameOverrides = normalized;
+
+        var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in CoverOverrides ?? new Dictionary<string, string>())
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                overrides[pair.Key.Trim()] = pair.Value.Trim();
+            }
+        }
+
+        CoverOverrides = overrides;
+
+        var trackOverrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in TrackCoverOverrides ?? new Dictionary<string, string>())
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                trackOverrides[pair.Key.Trim()] = pair.Value.Trim();
+            }
+        }
+
+        TrackCoverOverrides = trackOverrides;
+
+        var templates = new Dictionary<string, PresenceTemplate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in PlayerTemplates ?? new Dictionary<string, PresenceTemplate>())
+        {
+            if (string.IsNullOrWhiteSpace(pair.Key) || pair.Value is null)
+            {
+                continue;
+            }
+
+            var template = pair.Value.Normalize();
+            if (template.IsEmpty)
+            {
+                continue;
+            }
+
+            templates[pair.Key.Trim()] = template;
+        }
+
+        PlayerTemplates = templates;
 
         if (!Enum.TryParse<LogLevel>(LogLevel, ignoreCase: true, out _))
         {
@@ -538,6 +625,107 @@ public sealed class AppOptions
         }
 
         return PlayerNameOverrides.TryGetValue(appUserModelId, out var name) ? name : null;
+    }
+
+    /// <summary>
+    /// Portada propia configurada para esta aplicación (por AppUserModelId o por nombre de
+    /// reproductor), o null si no hay ninguna. Se comprueba el id exacto primero y después
+    /// el nombre sin distinguir mayúsculas.
+    /// </summary>
+    public string? ResolveCoverOverride(string? appUserModelId, string? playerName)
+    {
+        if (CoverOverrides.Count == 0)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(appUserModelId)
+            && CoverOverrides.TryGetValue(appUserModelId.Trim(), out var byId)
+            && !string.IsNullOrWhiteSpace(byId))
+        {
+            return byId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(playerName)
+            && CoverOverrides.TryGetValue(playerName.Trim(), out var byName)
+            && !string.IsNullOrWhiteSpace(byName))
+        {
+            return byName;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Portada propia configurada para una canción concreta, o null. Se prueba primero la
+    /// clave «artista + título» y después la de solo título, que sirve como comodín.
+    /// </summary>
+    public string? ResolveTrackCoverOverride(string? artist, string? title)
+    {
+        if (TrackCoverOverrides.Count == 0 || string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        var key = Infrastructure.TextMatch.TrackKey(artist, title);
+        if (TrackCoverOverrides.TryGetValue(key, out var byTrack) && !string.IsNullOrWhiteSpace(byTrack))
+        {
+            return byTrack;
+        }
+
+        var titleOnly = Infrastructure.TextMatch.TitleKey(title);
+        if (TrackCoverOverrides.TryGetValue(titleOnly, out var byTitle) && !string.IsNullOrWhiteSpace(byTitle))
+        {
+            return byTitle;
+        }
+
+        // Última pasada tolerante: «Dei V» debe valer para «Dei V & Rauw Alejandro» y
+        // «Himno (Remastered)» para «Himno». Sin esto la portada por canción solo
+        // funcionaba con el texto idéntico al que reporta el reproductor.
+        foreach (var pair in TrackCoverOverrides)
+        {
+            var separator = pair.Key.IndexOf('\u001f');
+            if (separator <= 0 || string.IsNullOrWhiteSpace(pair.Value))
+            {
+                continue;
+            }
+
+            var keyArtist = pair.Key[..separator];
+            var keyTitle = pair.Key[(separator + 1)..];
+
+            if (Infrastructure.TextMatch.Similar(keyTitle, title)
+                && Infrastructure.TextMatch.Similar(keyArtist, artist))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Plantilla propia del reproductor (por AppUserModelId o por nombre), o null.</summary>
+    public PresenceTemplate? ResolvePlayerTemplate(string? appUserModelId, string? playerName)
+    {
+        if (PlayerTemplates.Count == 0)
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(appUserModelId)
+            && PlayerTemplates.TryGetValue(appUserModelId.Trim(), out var byId)
+            && !byId.IsEmpty)
+        {
+            return byId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(playerName)
+            && PlayerTemplates.TryGetValue(playerName.Trim(), out var byName)
+            && !byName.IsEmpty)
+        {
+            return byName;
+        }
+
+        return null;
     }
 
     /// <summary>Persists the current values; throws so the UI can report a failure.</summary>
@@ -691,6 +879,19 @@ public sealed class ArtworkOptions
     /// </summary>
     public string UploadUrl { get; set; } = "";
 
+    /// <summary>
+    /// Redimensiona y recompone las carátulas antes de subirlas (máx. 1000 px de lado y
+    /// ~400 KB). Reduce el tiempo de subida y el ancho de banda sin diferencia visible en
+    /// Discord, que nunca muestra la imagen a más de ~300 px.
+    /// </summary>
+    public bool OptimizeUploads { get; set; } = true;
+
+    /// <summary>
+    /// Si el host elegido falla (caído, límite, red), intenta subir la misma carátula al
+    /// host alternativo gratuito en lugar de quedarse sin portada.
+    /// </summary>
+    public bool AllowFallbackUploadHost { get; set; } = true;
+
     /// <summary>Where thumbnails are cached. Defaults to %LOCALAPPDATA%\UniversalPresence\artwork.</summary>
     public string? CacheDirectory { get; set; }
 
@@ -761,5 +962,54 @@ public sealed class ArtworkOptions
 
         UploadApiKey = UploadApiKey?.Trim() ?? "";
         UploadUrl = UploadUrl?.Trim().TrimEnd('/') ?? "";
+    }
+}
+
+/// <summary>
+/// Plantilla de texto propia de un reproductor concreto. Cada campo vacío cae a la
+/// plantilla global y después al valor por defecto, así que solo hace falta rellenar lo
+/// que se quiera cambiar.
+/// </summary>
+public sealed class PresenceTemplate
+{
+    /// <summary>Línea 1 (Details). Marcadores: {title}, {artist}, {album}, {player}, {status}.</summary>
+    public string Details { get; set; } = "";
+
+    /// <summary>Línea 2 (State). Mismos marcadores.</summary>
+    public string State { get; set; } = "";
+
+    /// <summary>Tooltip de la portada (large text). Mismos marcadores.</summary>
+    public string LargeText { get; set; } = "";
+
+    [JsonIgnore]
+    public bool IsEmpty =>
+        string.IsNullOrWhiteSpace(Details)
+        && string.IsNullOrWhiteSpace(State)
+        && string.IsNullOrWhiteSpace(LargeText);
+
+    public PresenceTemplate Normalize()
+    {
+        Details = Details?.Trim() ?? "";
+        State = State?.Trim() ?? "";
+        LargeText = LargeText?.Trim() ?? "";
+        return this;
+    }
+
+    public static PresenceTemplate Create(string? details, string? state, string? largeText) => new()
+    {
+        Details = details?.Trim() ?? "",
+        State = state?.Trim() ?? "",
+        LargeText = largeText?.Trim() ?? "",
+    };
+
+    public override string ToString()
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(Details)) parts.Add(Details!);
+        if (!string.IsNullOrWhiteSpace(State)) parts.Add(State!);
+        if (!string.IsNullOrWhiteSpace(LargeText)) parts.Add(LargeText!);
+
+        return string.Join("  ·  ", parts);
     }
 }

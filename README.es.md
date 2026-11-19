@@ -43,7 +43,18 @@ lista: si Windows expone la sesión, se publica.
   badge de pausa.
 - **Se actualiza sola.** Al arrancar y cada 6 h consulta GitHub Releases; descarga la nueva
   versión, verifica su SHA-256 y la instala al cerrar (o al reiniciar desde el menú). Se puede
-  desactivar en el menú del icono.
+  desactivar en el menú del icono. Incluye canal **beta** (con versiones de prueba) y
+  **restaurar la versión anterior** con un clic si una actualización no va bien.
+- **Controles desde la bandeja.** Reproducir/pausar, siguiente y anterior se envían al
+  reproductor activo por SMTC, y la canción actual se puede copiar al portapapeles.
+- **Detección de ausencia.** Si el PC queda inactivo o bloqueado se oculta la presencia y
+  vuelve sola al regresar. El umbral de inactividad es configurable.
+- **Estadísticas de escucha.** Historial local opcional (`history.jsonl`) con reproducciones,
+  horas, artistas y canciones más escuchadas, últimos siete días y exportación a CSV.
+- **Portada propia por app.** Puedes fijar una carátula tuya (URL https o imagen local) a un
+  reproductor concreto, por encima de la que exponga.
+- **Last.fm.** Scrobbling opcional y «escuchando ahora» en tu perfil, autorizado desde la
+  configuración sin copiar tokens a mano.
 - **Comparte la app en tu perfil.** La actividad lleva dos botones, «Descargar» y «Cómo
   funciona», para que quien vea lo que escuchas llegue al proyecto en un clic.
 - **Presencia multiidioma.** El texto que se publica en Discord está disponible en 18

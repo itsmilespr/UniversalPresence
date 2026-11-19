@@ -52,7 +52,11 @@ public static class CrashDiagnostics
             }
 
             var entry = archive.CreateEntry("presence.log", CompressionLevel.Optimal);
-            using var input = File.OpenRead(log.FilePath);
+
+            // La app mantiene el registro abierto en escritura con FileShare.ReadWrite;
+            // File.OpenRead pide FileShare.Read y falla con «el archivo está en uso».
+            using var input = new FileStream(
+                log.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var output = entry.Open();
             input.CopyTo(output);
         }

@@ -57,12 +57,23 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private CancellationTokenSource? _inflightPublish;
     private volatile bool _paused;
     private volatile bool _gamingPaused;
+    private volatile bool _idleCleared;
 
     /// <summary>Última clave encolada (o enviada); el bucle compara la actividad contra ella.</summary>
     private volatile string? _desiredKey;
 
     /// <summary>Instante del último envío confirmado, en epoch ms (0 = todavía ninguno).</summary>
     private long _publishedAtUnixMs;
+
+    // Ancla de la última actividad enviada: sirve para detectar que la posición real se
+    // alejó de la que Discord está dibujando y reenviar los timestamps.
+    private TimeSpan _publishedPosition;
+    private DateTimeOffset _publishedAnchorAt = DateTimeOffset.MinValue;
+    private bool _hasPublishAnchor;
+
+    // Portadas propias subidas en esta ejecución (clave = ruta del archivo).
+    private readonly Dictionary<string, string> _overrideUrls = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _overrideGate = new();
 
     /// <summary>Desde cuándo la sesión activa se queda sin metadatos a mitad de cambio de pista.</summary>
     private DateTimeOffset _metadataGapSince = DateTimeOffset.MinValue;
@@ -97,6 +108,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _discord = new DiscordPresenceService(options, log);
         _factory = new ActivityFactory(options);
         _artworkLookup = new ArtworkLookupService(
+            options,
             log,
             Path.Combine(AppOptions.LocalDataDirectory, "lookup-cache.json"));
         _lastfm = new LastFmService(options, log);
@@ -106,6 +118,48 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _programIcons = new ProgramIconAssetService(options, _artworkUpload, log);
         _plugins = new PluginHost(options, log);
         _history = new ListeningHistoryService(options.ListeningHistoryRetentionDays, options.ListeningHistoryMaxEntries);
+    }
+
+    private int _queueDrainRunning;
+    private DateTimeOffset _nextQueueDrain = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Reintenta en segundo plano las subidas pendientes. Nunca bloquea el bucle: si el
+    /// host sigue caído, la portada actual no se toca y se vuelve a intentar más tarde.
+    /// </summary>
+    private void StartQueueDrain()
+    {
+        if (Interlocked.Exchange(ref _queueDrainRunning, 1) == 1)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var uploaded = await _artworkUpload.DrainQueueAsync(_cts.Token).ConfigureAwait(false);
+
+                if (uploaded > 0)
+                {
+                    _log.Info($"Se recuperaron {uploaded} portada(s) que no se pudieron subir antes.");
+                    Interlocked.Exchange(ref _forceRepublish, 1);
+                    _signal.Set();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // cerrando
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"Reintento de subidas pendientes falló: {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _queueDrainRunning, 0);
+            }
+        });
     }
 
     /// <summary>Raised when the tray needs to repaint; fires on a worker thread.</summary>
@@ -131,6 +185,26 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// </summary>
     public string? ImageProxyHint => _externalAssets.ImageProxyHint;
 
+    /// <summary>«Título — Artista» de lo que suena ahora, o null si no hay nada activo.</summary>
+    public string? CurrentTrackText
+    {
+        get
+        {
+            if (_lastSnapshot is not { IsActive: true } snapshot)
+            {
+                return null;
+            }
+
+            return string.IsNullOrWhiteSpace(snapshot.Artist)
+                ? snapshot.Title
+                : $"{snapshot.Title} — {snapshot.Artist}";
+        }
+    }
+
+    /// <summary>Manda una orden de transporte al reproductor activo por SMTC.</summary>
+    public Task<bool> ControlPlaybackAsync(SmtcMonitor.MediaControlAction action) =>
+        _monitor.TryControlAsync(action, _cts.Token);
+
     private readonly object _startLock = new();
 
     public void Start()
@@ -152,6 +226,21 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             // lectura de SMTC, el estado de la bandeja ni el siguiente cambio de pista.
             _publisher = Task.Run(() => PublishLoopAsync(_cts.Token));
         }
+
+        // Al arrancar se reintentan las subidas que fallaron la última vez (sin red, host
+        // caído). Se esperan unos segundos para no competir con la conexión a Discord.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(8), _cts.Token).ConfigureAwait(false);
+                StartQueueDrain();
+            }
+            catch (OperationCanceledException)
+            {
+                // cerrando
+            }
+        });
     }
 
     public void SetPaused(bool paused)
@@ -183,6 +272,53 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _signal.Set();
         Updated?.Invoke();
         _log.Info("Settings applied: restarting the SMTC monitor and republishing the activity.");
+    }
+
+    /// <summary>
+    /// Fuerza un reenvío inmediato de la actividad (menú de bandeja, <c>command.txt</c>).
+    /// Útil cuando Discord se quedó con una portada o un título viejo tras reconectar.
+    /// </summary>
+    /// <summary>
+    /// Pista en la que el usuario pidió «buscar otra portada»: hasta que cambie la canción
+    /// (o la búsqueda no encuentre nada) se prefiere el catálogo a la carátula del reproductor,
+    /// que es justo la que se quiere sustituir.
+    /// </summary>
+    private volatile string? _preferCatalogKey;
+
+    private static string ArtworkKey(MediaSnapshot snapshot) =>
+        $"{snapshot.Title}|{snapshot.Artist}|{snapshot.Album}";
+
+    public void RequestResync()
+    {
+        _desiredKey = null;
+        Interlocked.Exchange(ref _forceRepublish, 1);
+        _signal.Set();
+        _log.Info("Resincronización manual solicitada.");
+        Updated?.Invoke();
+    }
+
+    /// <summary>
+    /// Olvida la portada cacheada de la pista actual y la vuelve a buscar (menú de bandeja).
+    /// Devuelve false cuando no hay nada sonando.
+    /// </summary>
+    public bool RefreshCurrentCover()
+    {
+        if (_lastSnapshot is not { IsActive: true } snapshot || string.IsNullOrWhiteSpace(snapshot.Title))
+        {
+            _log.Debug("No hay una pista activa de la que buscar la portada de nuevo.");
+            return false;
+        }
+
+        _artworkLookup.Forget(snapshot.Title, snapshot.Artist, snapshot.Album);
+        _preferCatalogKey = ArtworkKey(snapshot);
+        _lastLookupKey = null;
+        _lastLookupUrl = null;
+        _desiredKey = null;
+        Interlocked.Exchange(ref _forceRepublish, 1);
+        _signal.Set();
+        _log.Info($"Buscando de nuevo la portada de «{snapshot.Title}».");
+        Updated?.Invoke();
+        return true;
     }
 
     /// <summary>
@@ -269,6 +405,50 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         _gamingPaused = false;
                     }
 
+                    // Ausencia: si el equipo está bloqueado o el usuario lleva un rato sin
+                    // tocar nada, se retira la presencia en lugar de dejar "escuchando" una
+                    // canción que ya nadie oye. Al volver se republica sola.
+                    if (_options.ClearWhenIdle)
+                    {
+                        var away = UserIdle.IsAway(_options.IdleSeconds);
+
+                        if (away != _idleCleared)
+                        {
+                            _idleCleared = away;
+                            _desiredKey = null;
+                            _hasPublishAnchor = false;
+                            _log.Info(away
+                                ? "Usuario ausente o sesión bloqueada: se oculta la presencia."
+                                : "Usuario de vuelta: se republica la presencia.");
+
+                            if (!away)
+                            {
+                                Interlocked.Exchange(ref _forceRepublish, 1);
+                            }
+                        }
+
+                        if (_idleCleared)
+                        {
+                            _lastSnapshot = null;
+                            _currentActivity = null;
+                            SetStatus("Away");
+
+                            if (!string.Equals(_desiredKey, IdleKey, StringComparison.Ordinal))
+                            {
+                                RequestPublish(null, IdleKey, urgent: true);
+                            }
+
+                            await _signal.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken)
+                                .ConfigureAwait(false);
+                            continue;
+                        }
+                    }
+                    else if (_idleCleared)
+                    {
+                        _idleCleared = false;
+                        _desiredKey = null;
+                    }
+
                     if (Interlocked.Exchange(ref _restartMonitorRequested, 0) == 1)
                     {
                         _monitor.Reset();
@@ -328,6 +508,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     // título, el artista y la barra salen al instante.
                     var snapshot = ApplyArtwork(best, _lastSnapshot);
 
+                    snapshot = ApplyCoverOverride(snapshot);
                     snapshot = ApplyProgramIcon(snapshot);
 
                     // Discord renders its own clock from the absolute start/end pair it already
@@ -352,6 +533,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             // The fresh read may lack the thumbnail/URL the resolved
                             // snapshot already had; re-resolve so the cover survives.
                             snapshot = ApplyArtwork(fresh, snapshot);
+                            snapshot = ApplyCoverOverride(snapshot);
                             snapshot = ApplyProgramIcon(snapshot);
                         }
 
@@ -414,7 +596,16 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         && !string.Equals(key, _desiredKey, StringComparison.Ordinal)
                         && activity is not null)
                     {
-                        try { _history.Record(snapshot.Title, snapshot.Artist, snapshot.Album, snapshot.PlayerName, DateTimeOffset.UtcNow); }
+                        try
+                        {
+                            _history.Record(
+                                snapshot.Title,
+                                snapshot.Artist,
+                                snapshot.Album,
+                                snapshot.PlayerName,
+                                DateTimeOffset.UtcNow,
+                                (long)snapshot.Duration.TotalMilliseconds);
+                        }
                         catch { }
 
                         // Scrobble de la pista anterior (si había una).
@@ -423,6 +614,14 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             var t = _prevScrobbleTitle; var a = _prevScrobbleArtist; var al = _prevScrobbleAlbum; var at = _prevScrobbleAt;
                             _ = Task.Run(() => _lastfm.ScrobbleAsync(t, a, al, at, CancellationToken.None));
                         }
+
+                        // «Escuchando ahora» para el perfil de Last.fm.
+                        if (_lastfm.IsEnabled && _options.LastFmNowPlaying)
+                        {
+                            var t = snapshot.Title; var a = snapshot.Artist; var al = snapshot.Album; var d = (long)snapshot.Duration.TotalSeconds;
+                            _ = Task.Run(() => _lastfm.UpdateNowPlayingAsync(t, a, al, d, CancellationToken.None));
+                        }
+
                         _prevScrobbleTitle = snapshot.Title;
                         _prevScrobbleArtist = snapshot.Artist;
                         _prevScrobbleAlbum = snapshot.Album;
@@ -448,7 +647,21 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         && _publishedAtUnixMs != 0
                         && publishedAge >= TimeSpan.FromSeconds(_options.PauseRefreshSeconds);
 
-                    var urgent = forceRepublish || !string.Equals(key, _desiredKey, StringComparison.Ordinal);
+                    // Deriva de la barra: si la posición real se separó de la que Discord está
+                    // dibujando (reproductor sin eventos, un seek silencioso, un ajuste del
+                    // reloj), se reenvían los timestamps en lugar de esperar al latido.
+                    var driftResync = HasProgressDrift(snapshot);
+
+                    if (driftResync)
+                    {
+                        _log.Debug(
+                            $"Deriva de progreso detectada en «{snapshot!.Title}» " +
+                            $"({FormatPosition(snapshot.Position)}); resincronizando la barra.");
+                    }
+
+                    var urgent = forceRepublish
+                        || driftResync
+                        || !string.Equals(key, _desiredKey, StringComparison.Ordinal);
 
                     var shouldPublish = urgent
                         || pausedAnchorDue
@@ -466,10 +679,22 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         // Encolar nunca bloquea: si Discord está en su límite, la actividad
                         // espera fuera de este bucle y un cambio más nuevo la reemplaza. Así
                         // el sondeo, la bandeja y los siguientes saltos siguen al instante.
-                        RequestPublish(activity, key, urgent);
+                        RequestPublish(
+                            activity,
+                            key,
+                            urgent,
+                            snapshot?.Position ?? TimeSpan.Zero);
                     }
 
                     SetStatus(Describe(snapshot));
+
+                    // Cada diez minutos se reintentan las subidas pendientes mientras la
+                    // app sigue viva (la red puede volver sin reiniciar nada).
+                    if (DateTimeOffset.UtcNow >= _nextQueueDrain)
+                    {
+                        _nextQueueDrain = DateTimeOffset.UtcNow.AddMinutes(10);
+                        StartQueueDrain();
+                    }
 
                     await _signal.WaitAsync(TimeSpan.FromMilliseconds(_options.PollIntervalMs), cancellationToken)
                         .ConfigureAwait(false);
@@ -524,7 +749,18 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return snapshot;
         }
 
-        if (artwork.UsesUpload && snapshot.Artwork is not null)
+        // Tras «buscar otra portada» se intenta primero el catálogo, aunque el reproductor
+        // traiga una carátula: es precisamente la que el usuario quiere cambiar.
+        var preferCatalog = artwork.UsesLookup
+            && _preferCatalogKey is not null
+            && string.Equals(_preferCatalogKey, ArtworkKey(snapshot), StringComparison.Ordinal);
+
+        if (!preferCatalog)
+        {
+            _preferCatalogKey = null;
+        }
+
+        if (artwork.UsesUpload && snapshot.Artwork is not null && !preferCatalog)
         {
             var cachedCover = _artworkUpload.GetCachedCover(snapshot.Artwork);
 
@@ -628,6 +864,176 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         // badge aparezca sin esperar a ningún proxy.
         Interlocked.Exchange(ref _forceRepublish, 1);
         _signal.Set();
+    }
+
+    /// <summary>
+    /// Aplica una portada propia configurada para esta aplicación (Configuración → Avanzado).
+    /// Acepta una URL https (se usa tal cual) o un archivo local, que se publica con el
+    /// mismo mecanismo que las carátulas de SMTC y se cachea por ruta.
+    /// </summary>
+    private MediaSnapshot? ApplyCoverOverride(MediaSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        // Prioridad: canción concreta > aplicación > búsqueda en catálogo. La de canción
+        // permite corregir una portada equivocada sin cambiar la de todo el reproductor.
+        var trackSource = _options.ResolveTrackCoverOverride(snapshot.Artist, snapshot.Title);
+        var source = !string.IsNullOrWhiteSpace(trackSource)
+            ? trackSource
+            : _options.ResolveCoverOverride(snapshot.AppUserModelId, snapshot.PlayerName);
+
+        if (!string.IsNullOrWhiteSpace(trackSource))
+        {
+            _log.Debug($"Portada propia por canción para «{snapshot.Title}»: {trackSource}");
+        }
+
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return snapshot;
+        }
+
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps)
+        {
+            return snapshot with { PublicArtworkUrl = source, ArtworkDecision = "override" };
+        }
+
+        try
+        {
+            if (!File.Exists(source))
+            {
+                return snapshot;
+            }
+
+            var key = "override|" + source;
+
+            lock (_overrideGate)
+            {
+                if (_overrideUrls.TryGetValue(key, out var known))
+                {
+                    return snapshot with { PublicArtworkUrl = known, ArtworkDecision = "override" };
+                }
+            }
+
+            // Host propio con carpeta pública: basta copiar el archivo a la caché.
+            if (!_options.Artwork.UsesUpload && _options.Artwork.UsesExternalUrl)
+            {
+                var directory = _options.Artwork.ResolvedCacheDirectory;
+                Directory.CreateDirectory(directory);
+                var name = "override-" + ShortHash(source) + Path.GetExtension(source).ToLowerInvariant();
+                var target = Path.Combine(directory, name);
+                if (!File.Exists(target) || File.GetLastWriteTimeUtc(target) < File.GetLastWriteTimeUtc(source))
+                {
+                    File.Copy(source, target, overwrite: true);
+                }
+
+                var hostedUrl = $"{_options.Artwork.ExternalUrlBase}/{name}";
+                lock (_overrideGate)
+                {
+                    _overrideUrls[key] = hostedUrl;
+                }
+
+                return snapshot with { PublicArtworkUrl = hostedUrl, ArtworkDecision = "override" };
+            }
+
+            if (!_options.Artwork.UsesUpload)
+            {
+                return snapshot;
+            }
+
+            if (_resolvingCovers.TryAdd(key, 0))
+            {
+                var info = new ArtworkInfo(
+                    source,
+                    Path.GetFileName(source),
+                    ContentTypeFor(source),
+                    "override-" + ShortHash(source),
+                    (int)new FileInfo(source).Length);
+
+                _ = Task.Run(() => ResolveOverrideCoverAsync(key, info));
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo aplicar la portada propia: {ex.Message}");
+        }
+
+        return snapshot;
+    }
+
+    private async Task ResolveOverrideCoverAsync(string key, ArtworkInfo info)
+    {
+        try
+        {
+            var url = await _artworkUpload.UploadAsync(info, _cts.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                return;
+            }
+
+            lock (_overrideGate)
+            {
+                _overrideUrls[key] = url;
+            }
+
+            _log.Info($"Portada propia publicada: {info.FileName} → {url}");
+            Interlocked.Exchange(ref _forceRepublish, 1);
+            _signal.Set();
+        }
+        catch (OperationCanceledException)
+        {
+            // cerrando
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo subir la portada propia: {ex.Message}");
+        }
+        finally
+        {
+            _resolvingCovers.TryRemove(key, out _);
+        }
+    }
+
+    private static string ContentTypeFor(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            _ => "image/jpeg",
+        };
+
+    private static string ShortHash(string value)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes, 0, 4).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// True cuando la posición real se alejó más de 2,5 s de la que Discord está dibujando
+    /// a partir del último envío. Es la red de seguridad para reproductores que no emiten
+    /// eventos de timeline: la barra se resincroniza sin esperar al latido.
+    /// </summary>
+    private bool HasProgressDrift(MediaSnapshot? snapshot)
+    {
+        if (!_options.ResyncProgressDrift
+            || !_hasPublishAnchor
+            || _publishedAtUnixMs == 0
+            || snapshot is not { Status: PlaybackState.Playing }
+            || snapshot.Duration <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        var expected = _publishedPosition + (DateTimeOffset.UtcNow - _publishedAnchorAt);
+        var difference = (snapshot.Position - expected).Duration();
+
+        return difference > TimeSpan.FromSeconds(2.5)
+            && difference < TimeSpan.FromMinutes(30);
     }
 
     private static MediaSnapshot? CarryOverArtwork(MediaSnapshot? snapshot, MediaSnapshot? previous)
@@ -823,6 +1229,9 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
             if (string.IsNullOrWhiteSpace(rawUrl))
             {
+                // La búsqueda manual no encontró nada mejor: se vuelve a la carátula del
+                // reproductor en lugar de dejar la pista sin portada.
+                ClearCatalogPreference(key);
                 return;
             }
 
@@ -842,16 +1251,40 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         }
         catch (OperationCanceledException)
         {
-            // cerrando
+            // Al cerrar no hay nada que reintentar; un timeout de red sí debe devolver la
+            // pista a su carátula normal.
+            if (!_cts.IsCancellationRequested)
+            {
+                ClearCatalogPreference(key);
+            }
         }
         catch (Exception ex)
         {
             _log.Debug($"Búsqueda de portada fallida: {ex.Message}");
+            ClearCatalogPreference(key);
         }
         finally
         {
             _resolvingCovers.TryRemove(key, out _);
         }
+    }
+
+    /// <summary>
+    /// La búsqueda manual no dio resultado: la pista vuelve a usar la carátula que entrega
+    /// el reproductor en lugar de quedarse sin imagen hasta que cambie la canción.
+    /// </summary>
+    private void ClearCatalogPreference(string key)
+    {
+        if (_preferCatalogKey is null
+            || !string.Equals(_preferCatalogKey, key, StringComparison.Ordinal)
+            || !string.Equals(_lastLookupKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _preferCatalogKey = null;
+        Interlocked.Exchange(ref _forceRepublish, 1);
+        _signal.Set();
     }
 
     /// <summary>
@@ -957,13 +1390,17 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// Encola la última actividad a publicar. Solo hay un hueco: lo que llegue después
     /// sustituye a lo anterior, porque en Discord solo se ve el estado final.
     /// </summary>
-    private void RequestPublish(DiscordActivity? activity, string key, bool urgent)
+    private void RequestPublish(
+        DiscordActivity? activity,
+        string key,
+        bool urgent,
+        TimeSpan position = default)
     {
         CancellationTokenSource? inflight;
 
         lock (_publishGate)
         {
-            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow);
+            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position);
             inflight = _inflightPublish;
         }
 
@@ -1044,6 +1481,17 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 if (published)
                 {
                     _publishedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                    if (request.Activity is not null)
+                    {
+                        _publishedPosition = request.Position;
+                        _publishedAnchorAt = DateTimeOffset.UtcNow;
+                        _hasPublishAnchor = true;
+                    }
+                    else
+                    {
+                        _hasPublishAnchor = false;
+                    }
                 }
                 else if (!supersede.IsCancellationRequested && request.Activity is not null)
                 {
@@ -1220,7 +1668,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         DiscordActivity? Activity,
         string Key,
         bool Urgent,
-        DateTimeOffset QueuedAt);
+        DateTimeOffset QueuedAt,
+        TimeSpan Position);
 
     public async Task StopAsync()
     {

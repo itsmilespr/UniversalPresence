@@ -20,7 +20,12 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
 | `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
 | `Core/PresenceEngine.cs` | Si la memoria privada supera 160 MB (comprobado cada 30 s) fuerza un GC de gen2 en segundo plano: las referencias WinRT solo se liberan ahí y el heap gestionado es de ~2 MB. |
-| `Infrastructure/UpdateService.cs` | Consulta GitHub Releases, descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso. |
+| `Infrastructure/UpdateService.cs` | Consulta GitHub Releases (`/releases/latest` en estable, `/releases` filtrando pre-releases en beta), descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso y guarda el anterior como `.exe.bak`. `TryRestorePreviousVersion()` usa un segundo script para volver a ese `.bak`. |
+| `Infrastructure/UserIdle.cs` | `GetLastInputInfo` para los segundos sin teclado/ratón y `OpenInputDesktop` para detectar bloqueo (un fallo de apertura es pantalla segura). Con `ClearWhenIdle` el motor limpia la presencia y la republica al volver. |
+| `Infrastructure/ListeningHistory.cs` | Historial JSON Lines (`history.jsonl`) con título, artista, álbum, reproductor, fecha y duración. Agrega `Compute(días)` para el panel de estadísticas y exporta CSV. |
+| `Localization/UiStrings.cs` | Diccionario por idioma para las cadenas nuevas (controles, estadísticas, ausencia, canal, portadas propias, Last.fm y asistente) en en/es/pt/fr/de/it/zh, con caída a inglés. |
+| `Tray/StatsForm.cs` | Panel de estadísticas: tarjetas de totales, top artistas/canciones, últimos 7 días, filtro por periodo y exportación CSV. |
+| `Tray/FirstRunForm.cs` | Asistente inicial: idioma, arranque con Windows, avisos, historial, overlay, estado de Discord y explicación de portadas/privacidad. |
 | `Media/SmtcMonitor.cs` | Cachea sesiones, sesión actual, metadatos, playback y timeline (eventos + TTL de 30 s/6 s) para no crear objetos WinRT cada segundo. La posición se proyecta desde `LastUpdated`, así que la barra sigue exacta. |
 | `Localization/PresenceText.cs` | Textos de la presencia en 18 idiomas (inglés por defecto): estado, álbum y botones. Se elige con `Language` en `config.json`. |
 | `Discord/DiscordIpcClient.cs` | Named pipe `discord-ipc-0..9`, handshake `{v:1, client_id}`, frames de 8 bytes (op + longitud), `PING`→`PONG`, `SET_ACTIVITY`. |
@@ -160,6 +165,16 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `IgnoredPlayers` | navegadores | Lista **negra** por subcadena sobre AUMID, proceso y nombre. |
 | `PlayerNameOverrides` | `{}` | `{"AUMID": "Nombre"}`. Solo cambia el nombre, nunca filtra. |
 | `TreatStoppedAsPaused` | `false` | Para integraciones que reportan `Stopped` al pausar. |
+| `ClearWhenIdle` | `false` | Oculta la presencia si el PC está inactivo o bloqueado. |
+| `IdleSeconds` | `600` | Segundos sin actividad para considerar ausencia (30–86400). |
+| `ResyncProgressDrift` | `true` | Reenvía los timestamps si la posición real se aleja más de 2,5 s de la barra publicada. |
+| `UpdateChannel` | `"stable"` | `stable` o `beta` (incluye pre-releases). |
+| `CoverOverrides` | `{}` | `{"Spotify.exe": "https://…"}` o ruta de archivo: portada propia por app. |
+| `LastFmApiKey` / `LastFmSecret` | `""` | Credenciales de la API de Last.fm (cifradas en `secrets.dpapi.json`). |
+| `LastFmUser` / `LastFmSessionKey` | `""` | Sesión obtenida por el botón «Conectar con Last.fm». |
+| `LastFmNowPlaying` | `true` | Publica «escuchando ahora» además del scrobble. |
+| `ListeningHistory` | `true` | Guarda el historial local de escucha. |
+| `ListeningHistoryRetentionDays` / `ListeningHistoryMaxEntries` | `90` / `5000` | Retención del historial antes de recortar. |
 | `LogLevel` | `"Info"` | `Debug`, `Info`, `Warn` o `Error`. |
 
 Variables de entorno:

@@ -71,12 +71,24 @@ public sealed class ActivityFactory
         //   SmallImage = Icono del reproductor (si está disponible)
         //   SmallText = Nombre del reproductor + contador de repeticiones
 
-        var detailsValue = !string.IsNullOrWhiteSpace(_options.DetailsTemplate)
-            ? ApplyTemplate(_options.DetailsTemplate, snapshot, status, text)
+        // Plantilla propia del reproductor; cada campo vacío cae a la global y después al
+        // valor por defecto. Así solo se rellena lo que de verdad se quiere cambiar.
+        var playerTemplate = _options.ResolvePlayerTemplate(snapshot.AppUserModelId, player);
+
+        var detailsTemplate = !string.IsNullOrWhiteSpace(playerTemplate?.Details)
+            ? playerTemplate!.Details
+            : _options.DetailsTemplate;
+
+        var detailsValue = !string.IsNullOrWhiteSpace(detailsTemplate)
+            ? ApplyTemplate(detailsTemplate, snapshot, status, text)
             : FirstNonEmpty(snapshot.Title, artist, player, text.Playing);
 
-        var stateValue = !string.IsNullOrWhiteSpace(_options.StateTemplate)
-            ? ApplyTemplate(_options.StateTemplate, snapshot, status, text)
+        var stateTemplate = !string.IsNullOrWhiteSpace(playerTemplate?.State)
+            ? playerTemplate!.State
+            : _options.StateTemplate;
+
+        var stateValue = !string.IsNullOrWhiteSpace(stateTemplate)
+            ? ApplyTemplate(stateTemplate, snapshot, status, text)
             : FirstNonEmpty(artist, album, player);
 
         if (_options.AppendPlayerToState
@@ -94,10 +106,14 @@ public sealed class ActivityFactory
         }
 
         // Si hay álbum, mostrarlo con prefijo "En" para que quede más bonito en el tooltip
+        var largeTextTemplate = !string.IsNullOrWhiteSpace(playerTemplate?.LargeText)
+            ? playerTemplate!.LargeText
+            : _options.LargeTextTemplate;
+
         string largeText;
-        if (!string.IsNullOrWhiteSpace(_options.LargeTextTemplate))
+        if (!string.IsNullOrWhiteSpace(largeTextTemplate))
         {
-            largeText = ApplyTemplate(_options.LargeTextTemplate, snapshot, status, text);
+            largeText = ApplyTemplate(largeTextTemplate, snapshot, status, text);
         }
         else
         {
@@ -302,7 +318,15 @@ public sealed class ActivityFactory
         result = result.Replace("{artist}", snapshot.Artist ?? "", StringComparison.Ordinal);
         result = result.Replace("{album}", snapshot.Album ?? "", StringComparison.Ordinal);
         result = result.Replace("{player}", snapshot.PlayerName ?? "", StringComparison.Ordinal);
-        result = result.Replace("{status}", status.ToString(), StringComparison.Ordinal);
+        // {status} se publica en el idioma configurado: "Reproduciendo" en vez de "Playing".
+        var statusText = status switch
+        {
+            PlaybackState.Playing => text.Playing,
+            PlaybackState.Paused => text.Paused,
+            _ => status.ToString(),
+        };
+
+        result = result.Replace("{status}", statusText, StringComparison.Ordinal);
         return result;
     }
 

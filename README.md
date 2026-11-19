@@ -43,7 +43,18 @@ if Windows exposes the session, it is published.
   can be shown.
 - **Self-updating.** Checks GitHub Releases on startup and every 6 h; downloads the new build,
   verifies its SHA-256 and installs it on exit (or immediately from the menu). Can be disabled
-  from the tray menu.
+  from the tray menu. Optional **beta** channel (includes pre-releases) and a one-click
+  **restore of the previous version** if an update does not behave.
+- **Player controls from the tray.** Play/pause, next and previous are forwarded to the active
+  player over SMTC, and the current song can be copied to the clipboard.
+- **Away detection.** While the PC is idle or locked the activity is hidden, and it comes back
+  on its own when you return. The idle threshold is configurable.
+- **Listening statistics.** Optional local history (`history.jsonl`) with plays, hours, top
+  artists and tracks, the last seven days and a CSV export.
+- **Custom cover per app.** A cover of your own — an https URL or a local image — can be pinned
+  to one player, overriding whatever it exposes.
+- **Last.fm.** Optional scrobbling, plus “now playing” on your profile, authorized from the
+  settings window without copying tokens by hand.
 - **Share the app from your profile.** The activity carries two buttons, “Download” and “How it
   works”, so anyone who sees what you are playing can reach the project in one click.
 - **Multi-language presence.** The text published to Discord is available in 18 languages and

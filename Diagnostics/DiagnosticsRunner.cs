@@ -99,6 +99,8 @@ public static class DiagnosticsRunner
                 Console.WriteLine($"  Artist      : {Value(snapshot.Artist)}");
                 Console.WriteLine($"  Album       : {Value(snapshot.Album)}");
                 Console.WriteLine($"  Time        : {FormatTime(snapshot.Position)} / {FormatTime(snapshot.Duration)}");
+                Console.WriteLine($"  LastUpdated : {(snapshot.SourceUpdatedAt == DateTimeOffset.MinValue ? "(inválido/MinValue)" : snapshot.SourceUpdatedAt.ToString("O"))}");
+                Console.WriteLine($"  Cover decision: {snapshot.ArtworkDecision}");
                 Console.WriteLine($"  Cover       : {(snapshot.Artwork is null
                     ? "no cover (the app icon will be used on Discord)"
                     : $"{snapshot.Artwork.ByteCount / 1024.0:0.0} KB {snapshot.Artwork.ContentType} → {snapshot.Artwork.FilePath}")}");
@@ -192,6 +194,8 @@ public static class DiagnosticsRunner
             Console.WriteLine($"  Artist       : {Value(session.Artist)}");
             Console.WriteLine($"  Album        : {Value(session.Album)}");
             Console.WriteLine($"  Time         : {FormatTime(session.Position)} / {FormatTime(session.Duration)}");
+            Console.WriteLine($"  LastUpdated  : {(session.SourceUpdatedAt == DateTimeOffset.MinValue ? "(inválido/MinValue)" : session.SourceUpdatedAt.ToString("O"))}");
+            Console.WriteLine($"  Cover decision: {session.ArtworkDecision}");
             Console.WriteLine($"  Cover        : {(session.Artwork is null ? "no cover" : $"{session.Artwork.ByteCount / 1024.0:0.0} KB {session.Artwork.ContentType}")}");
         }
 

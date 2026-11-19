@@ -16,7 +16,9 @@ public sealed class SettingsForm : Form
     private Action _onSaved;
     private List<string> _ignored;
     private UiText _ui;
-    private TabControl _tabs;
+    private UiStrings _strings;
+    private TabControl _tabs = null!;
+    private Panel _headerPanel = null!;
 
     // --- Blacklist tab ----------------------------------------------------------
     private ListBox _ignoredList = null!;
@@ -71,6 +73,36 @@ public sealed class SettingsForm : Form
     private TextBox _lastFmSecretBox = null!;
     private TextBox _lastFmUserBox = null!;
     private TextBox _lastFmSessionKeyBox = null!;
+    private CheckBox _lastFmNowPlayingBox = null!;
+
+    // --- Avanzado ----------------------------------------------------------------
+    private CheckBox _clearWhenIdle = null!;
+    private NumericUpDown _idleSecondsBox = null!;
+    private CheckBox _resyncDrift = null!;
+    private ComboBox _channelBox = null!;
+    private CheckBox _autoRollback = null!;
+    private ListBox _overridesList = null!;
+    private TextBox _overridePlayerBox = null!;
+    private TextBox _overrideSourceBox = null!;
+    private Dictionary<string, string> _overrides = new(StringComparer.OrdinalIgnoreCase);
+
+    // --- Portada propia por canción ----------------------------------------------
+    private ListBox _trackOverridesList = null!;
+    private TextBox _trackArtistBox = null!;
+    private TextBox _trackTitleBox = null!;
+    private TextBox _trackSourceBox = null!;
+    private Dictionary<string, string> _trackOverrides = new(StringComparer.OrdinalIgnoreCase);
+
+    // --- Textos de presencia por reproductor --------------------------------------
+    private ListBox _templatesList = null!;
+    private TextBox _templatePlayerBox = null!;
+    private TextBox _templateDetailsBox = null!;
+    private TextBox _templateStateBox = null!;
+    private Dictionary<string, PresenceTemplate> _templates = new(StringComparer.OrdinalIgnoreCase);
+
+    // --- Portadas: subida ---------------------------------------------------------
+    private CheckBox _optimizeUploads = null!;
+    private CheckBox _fallbackHost = null!;
 
     private bool _cancelled;
     private bool _saved;
@@ -86,6 +118,24 @@ public sealed class SettingsForm : Form
         _onSaved = onSaved;
         _ignored = options.IgnoredPlayers.ToList();
         _ui = UiText.For(options.Language);
+        _strings = UiStrings.For(options.Language);
+        _overrides = new Dictionary<string, string>(
+            options.CoverOverrides ?? new Dictionary<string, string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        _trackOverrides = new Dictionary<string, string>(
+            options.TrackCoverOverrides ?? new Dictionary<string, string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        _templates = new Dictionary<string, PresenceTemplate>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in options.PlayerTemplates ?? new Dictionary<string, PresenceTemplate>())
+        {
+            var template = pair.Value;
+            if (template is not null && !string.IsNullOrWhiteSpace(pair.Key))
+            {
+                _templates[pair.Key] = PresenceTemplate.Create(template.Details, template.State, template.LargeText);
+            }
+        }
 
         Text = _ui.SettingsTitle;
         Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point);
@@ -96,16 +146,19 @@ public sealed class SettingsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(620, 740);
-        MinimumSize = new Size(560, 600);
+        ClientSize = new Size(700, 800);
+        MinimumSize = new Size(620, 640);
         Icon = TrayIcons.Get(TrayVisualState.Playing);
 
         // ---- Tab control -------------------------------------------------------
         _tabs = new TabControl
         {
             Dock = DockStyle.Fill,
-            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
-            Padding = new Point(12, 6),
+            Font = new Font("Segoe UI", 10.5f, FontStyle.Regular, GraphicsUnit.Point),
+            Padding = new Point(18, 8),
+            Appearance = TabAppearance.FlatButtons,
+            ItemSize = new Size(0, 30),
+            SizeMode = TabSizeMode.FillToRight,
         };
         _tabs.TabPages.Add(MakeTab(_ui.PlayersTab, BuildPlayersTab()));
         _tabs.TabPages.Add(MakeTab(_ui.BehaviorTab, BuildBehaviorTab()));
@@ -113,6 +166,7 @@ public sealed class SettingsForm : Form
         _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
         _tabs.TabPages.Add(MakeTab("Portadas", BuildArtworkTab()));
         _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
+        _tabs.TabPages.Add(MakeTab(_strings["AdvancedTab"], BuildAdvancedTab()));
 
         // ---- Bottom buttons ----------------------------------------------------
         var buttons = new FlowLayoutPanel
@@ -126,6 +180,7 @@ public sealed class SettingsForm : Form
 
         var saveButton = new Button
         {
+            Name = "SaveButton",
             Text = _ui.Save,
             AutoSize = true,
             MinimumSize = new Size(104, 34),
@@ -175,12 +230,47 @@ public sealed class SettingsForm : Form
             BackColor = PageBg,
         };
 
+        // ---- Cabecera moderna --------------------------------------------------
+        _headerPanel = new Panel
+        {
+            Name = "HeaderPanel",
+            Dock = DockStyle.Top,
+            Height = 78,
+            BackColor = Accent,
+            Padding = new Padding(20, 14, 20, 14),
+        };
+        var headerTitle = new Label
+        {
+            Text = _ui.AppName,
+            Font = new Font("Segoe UI", 16f, FontStyle.Bold, GraphicsUnit.Point),
+            ForeColor = Color.White,
+            AutoSize = true,
+            Location = new Point(20, 12),
+            BackColor = Color.Transparent,
+        };
+        var headerSubtitle = new Label
+        {
+            Text = $"{_ui.Settings.TrimEnd('…').Trim()} · v{typeof(SettingsForm).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"}",
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+            ForeColor = Color.FromArgb(220, 235, 255),
+            AutoSize = true,
+            Location = new Point(22, 46),
+            BackColor = Color.Transparent,
+        };
+        _headerPanel.Controls.Add(headerTitle);
+        _headerPanel.Controls.Add(headerSubtitle);
+        RoundCorners(_headerPanel, 0);
+
         // El panel Fill se añade al final para que los paneles inferiores (botones/pista)
         // queden por encima y no tapen los controles de las pestañas.
         Controls.Add(buttons);
         Controls.Add(hint);
         Controls.Add(_tabs);
+        Controls.Add(_headerPanel);
         _tabs.BringToFront();
+
+        RoundCorners(saveButton, 8);
+        RoundCorners(cancelButton, 8);
 
         AcceptButton = saveButton;
         CancelButton = cancelButton;
@@ -203,9 +293,11 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             BackColor = CardBg,
-            Padding = new Padding(16),
+            Padding = new Padding(18),
             Margin = new Padding(0, 0, 0, 8),
+            BorderStyle = BorderStyle.FixedSingle,
         };
+        RoundCorners(card, 10);
         content.Dock = DockStyle.Top;
         card.Controls.Add(content);
         page.Controls.Add(card);
@@ -301,17 +393,10 @@ public sealed class SettingsForm : Form
             AddTypedPlayer();
         };
 
-        var panel = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        panel.Controls.Add(_ignoredList);
-        panel.Controls.Add(addRow);
-        panel.Controls.Add(hint);
+        var panel = Stack();
+        AddRow(panel, _ignoredList);
+        AddRow(panel, addRow);
+        AddRow(panel, hint);
         return panel;
     }
 
@@ -384,18 +469,18 @@ public sealed class SettingsForm : Form
             BeginInvoke(new Action(RebuildTabs));
         };
 
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var panel = Stack();
         var header = new Label { Text = _ui.BehaviorGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
-        panel.Controls.Add(header);
-        panel.Controls.Add(langLabel);
-        panel.Controls.Add(_languageBox);
-        panel.Controls.Add(_appendPlayer);
-        panel.Controls.Add(_usePlayerNameAsActivity);
-        panel.Controls.Add(_hideIfNoArtwork);
-        panel.Controls.Add(_startWithWindows);
-        panel.Controls.Add(_showProgress);
-        panel.Controls.Add(_darkMode);
-        panel.Controls.Add(pauseRow);
+        AddRow(panel, header);
+        AddRow(panel, langLabel);
+        AddRow(panel, _languageBox);
+        AddRow(panel, _appendPlayer);
+        AddRow(panel, _usePlayerNameAsActivity);
+        AddRow(panel, _hideIfNoArtwork);
+        AddRow(panel, _startWithWindows);
+        AddRow(panel, _showProgress);
+        AddRow(panel, _darkMode);
+        AddRow(panel, pauseRow);
 
         // Perfiles de configuración.
         var profileLabel = new Label { Text = "Profile:", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
@@ -449,7 +534,7 @@ public sealed class SettingsForm : Form
         profileRow.Controls.Add(switchButton);
         profileRow.Controls.Add(newButton);
         profileRow.Controls.Add(deleteButton);
-        panel.Controls.Add(profileRow);
+        AddRow(panel, profileRow);
 
         return panel;
     }
@@ -463,14 +548,14 @@ public sealed class SettingsForm : Form
         _pauseAssetKey = CreateAssetKeyBox(_ui.PauseAssetKeyLabel, _options.PauseAssetKey, "PauseAssetKeyBox");
         _appIconAssetKey = CreateAssetKeyBox(_ui.AppIconAssetKeyLabel, _options.AppIconAssetKey, "AppIconAssetKeyBox");
 
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var panel = Stack();
         var header = new Label { Text = _ui.PausedGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
-        panel.Controls.Add(header);
-        panel.Controls.Add(_showPausedMedia);
-        panel.Controls.Add(_pauseResetProgress);
-        panel.Controls.Add(_showPausedIcon);
-        panel.Controls.Add(_pauseAssetKey);
-        panel.Controls.Add(_appIconAssetKey);
+        AddRow(panel, header);
+        AddRow(panel, _showPausedMedia);
+        AddRow(panel, _pauseResetProgress);
+        AddRow(panel, _showPausedIcon);
+        AddRow(panel, _pauseAssetKey);
+        AddRow(panel, _appIconAssetKey);
         return panel;
     }
 
@@ -486,21 +571,87 @@ public sealed class SettingsForm : Form
         _stateTemplateBox = new TextBox { Text = _options.StateTemplate, Dock = DockStyle.Top, Name = "StateTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _largeTextTemplateBox = new TextBox { Text = _options.LargeTextTemplate, Dock = DockStyle.Top, Name = "LargeTextTemplateBox", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
 
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var panel = Stack();
         var header = new Label { Text = "Funciones nuevas", AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
-        panel.Controls.Add(header);
-        panel.Controls.Add(_showOverlay);
-        panel.Controls.Add(_gamingMode);
-        panel.Controls.Add(_showTrackChangeToast);
-        panel.Controls.Add(_globalHotkeys);
-        panel.Controls.Add(_listeningHistory);
+        AddRow(panel, header);
+        AddRow(panel, _showOverlay);
+        AddRow(panel, _gamingMode);
+        AddRow(panel, _showTrackChangeToast);
+        AddRow(panel, _globalHotkeys);
+        AddRow(panel, _listeningHistory);
 
-        panel.Controls.Add(new Label { Text = "Plantilla Details (usa {title}, {artist}, {album}, {player}):", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        panel.Controls.Add(_detailsTemplateBox);
-        panel.Controls.Add(new Label { Text = "Plantilla State:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        panel.Controls.Add(_stateTemplateBox);
-        panel.Controls.Add(new Label { Text = "Plantilla Large text:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
-        panel.Controls.Add(_largeTextTemplateBox);
+        AddRow(panel, new Label { Text = "Plantilla Details (usa {title}, {artist}, {album}, {player}):", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        AddRow(panel, _detailsTemplateBox);
+        AddRow(panel, new Label { Text = "Plantilla State:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        AddRow(panel, _stateTemplateBox);
+        AddRow(panel, new Label { Text = "Plantilla Large text:", AutoSize = true, Margin = new Padding(0, 6, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point) });
+        AddRow(panel, _largeTextTemplateBox);
+
+        // --- Textos propios de un reproductor concreto --------------------------
+        _templatesList = new ListBox
+        {
+            Dock = DockStyle.Top,
+            Height = 100,
+            IntegralHeight = false,
+            SelectionMode = SelectionMode.One,
+            Name = "PlayerTemplatesList",
+            AccessibleName = _strings["PlayerTemplatesGroup"],
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        _templatesList.DoubleClick += (_, _) => LoadSelectedTemplate();
+
+        _templatePlayerBox = new TextBox
+        {
+            Width = 240,
+            PlaceholderText = _strings["PlayerTemplatePlayer"],
+            Name = "PlayerTemplatePlayerBox",
+            AccessibleName = _strings["PlayerTemplatePlayer"],
+        };
+        _templateDetailsBox = new TextBox
+        {
+            Width = 300,
+            PlaceholderText = _strings["PlayerTemplateDetails"],
+            Name = "PlayerTemplateDetailsBox",
+            AccessibleName = _strings["PlayerTemplateDetails"],
+        };
+        _templateStateBox = new TextBox
+        {
+            Width = 300,
+            PlaceholderText = _strings["PlayerTemplateState"],
+            Name = "PlayerTemplateStateBox",
+            AccessibleName = _strings["PlayerTemplateState"],
+        };
+
+        var addTemplate = new Button { Text = _ui.Add, AutoSize = true, Name = "AddTemplateButton" };
+        addTemplate.Click += (_, _) => AddTemplate();
+
+        var removeTemplate = new Button { Text = _ui.Remove, AutoSize = true, Name = "RemoveTemplateButton" };
+        removeTemplate.Click += (_, _) => RemoveTemplate();
+
+        var templateRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 6, 0, 0) };
+        templateRow.Controls.Add(_templatePlayerBox);
+        templateRow.Controls.Add(_templateDetailsBox);
+
+        var templateRow2 = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 4, 0, 0) };
+        templateRow2.Controls.Add(_templateStateBox);
+        templateRow2.Controls.Add(addTemplate);
+        templateRow2.Controls.Add(removeTemplate);
+
+        AddRow(panel, Header(_strings["PlayerTemplatesGroup"]));
+        AddRow(panel, _templatesList);
+        AddRow(panel, templateRow);
+        AddRow(panel, templateRow2);
+        AddRow(panel, new Label
+        {
+            Text = _strings["PlayerTemplatesHint"],
+            AutoSize = true,
+            MaximumSize = new Size(520, 0),
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Margin = new Padding(0, 8, 0, 0),
+            Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
+        });
+
+        RefreshTemplates();
         return panel;
     }
 
@@ -508,6 +659,8 @@ public sealed class SettingsForm : Form
     {
         _artworkEnabledCheck = MakeCheck("Leer y publicar carátulas (SMTC)", _options.Artwork.Enabled, "ArtworkEnabledCheck");
         _iconOnlyCheck = MakeCheck("Solo icono (no subir/buscar portadas)", _options.Artwork.IconOnly, "IconOnlyCheck");
+        _optimizeUploads = MakeCheck(_strings["OptimizeUploads"], _options.Artwork.OptimizeUploads, "OptimizeUploadsCheck");
+        _fallbackHost = MakeCheck(_strings["FallbackHost"], _options.Artwork.AllowFallbackUploadHost, "FallbackHostCheck");
 
         var modeLabel = new Label { Text = "Modo de portada:", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
         _artworkModeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220, Name = "ArtworkModeBox" };
@@ -534,29 +687,31 @@ public sealed class SettingsForm : Form
         var entriesLabel = new Label { Text = "Entradas máximas (0 = sin límite):", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
         _historyEntriesBox = new NumericUpDown { Minimum = 0, Maximum = 100000, Value = Math.Clamp(_options.ListeningHistoryMaxEntries, 0, 100000), Width = 90, Name = "HistoryEntriesBox" };
 
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
-        panel.Controls.Add(_artworkEnabledCheck);
-        panel.Controls.Add(_iconOnlyCheck);
-        panel.Controls.Add(modeLabel);
-        panel.Controls.Add(_artworkModeBox);
-        panel.Controls.Add(uploadLabel);
-        panel.Controls.Add(_uploadModeBox);
-        panel.Controls.Add(new Label { Text = "URL del host propio:", AutoSize = true, Margin = new Padding(0, 8, 0, 2) });
-        panel.Controls.Add(_uploadUrlBox);
-        panel.Controls.Add(new Label { Text = "Token / Client-ID:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        panel.Controls.Add(_uploadApiKeyBox);
-        panel.Controls.Add(new Label { Text = "Botón 1:", AutoSize = true, Margin = new Padding(0, 10, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
-        panel.Controls.Add(_button1LabelBox);
-        panel.Controls.Add(_button1UrlBox);
-        panel.Controls.Add(new Label { Text = "Botón 2:", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
-        panel.Controls.Add(_button2LabelBox);
-        panel.Controls.Add(_button2UrlBox);
+        var panel = Stack();
+        AddRow(panel, _artworkEnabledCheck);
+        AddRow(panel, _iconOnlyCheck);
+        AddRow(panel, modeLabel);
+        AddRow(panel, _artworkModeBox);
+        AddRow(panel, uploadLabel);
+        AddRow(panel, _uploadModeBox);
+        AddRow(panel, new Label { Text = "URL del host propio:", AutoSize = true, Margin = new Padding(0, 8, 0, 2) });
+        AddRow(panel, _uploadUrlBox);
+        AddRow(panel, new Label { Text = "Token / Client-ID:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        AddRow(panel, _uploadApiKeyBox);
+        AddRow(panel, _optimizeUploads);
+        AddRow(panel, _fallbackHost);
+        AddRow(panel, new Label { Text = "Botón 1:", AutoSize = true, Margin = new Padding(0, 10, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
+        AddRow(panel, _button1LabelBox);
+        AddRow(panel, _button1UrlBox);
+        AddRow(panel, new Label { Text = "Botón 2:", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
+        AddRow(panel, _button2LabelBox);
+        AddRow(panel, _button2UrlBox);
         var row = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
         row.Controls.Add(daysLabel);
         row.Controls.Add(_historyDaysBox);
         row.Controls.Add(entriesLabel);
         row.Controls.Add(_historyEntriesBox);
-        panel.Controls.Add(row);
+        AddRow(panel, row);
         return panel;
     }
 
@@ -567,26 +722,663 @@ public sealed class SettingsForm : Form
         _lastFmUserBox = new TextBox { Text = _options.LastFmUser, Dock = DockStyle.Top, Name = "LastFmUserBox", PlaceholderText = "Usuario", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
         _lastFmSessionKeyBox = new TextBox { Text = _options.LastFmSessionKey, Dock = DockStyle.Top, Name = "LastFmSessionKeyBox", PlaceholderText = "Session key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
 
-        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        var panel = Stack();
         var header = new Label { Text = "Last.fm (scrobbling)", AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
-        panel.Controls.Add(header);
-        panel.Controls.Add(new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
-        panel.Controls.Add(_lastFmApiKeyBox);
-        panel.Controls.Add(new Label { Text = "Shared secret:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        panel.Controls.Add(_lastFmSecretBox);
-        panel.Controls.Add(new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        panel.Controls.Add(_lastFmUserBox);
-        panel.Controls.Add(new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
-        panel.Controls.Add(_lastFmSessionKeyBox);
-        panel.Controls.Add(new Label
+        AddRow(panel, header);
+        AddRow(panel, new Label { Text = "API key:", AutoSize = true, Margin = new Padding(0, 0, 0, 2) });
+        AddRow(panel, _lastFmApiKeyBox);
+        AddRow(panel, new Label { Text = "Shared secret:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        AddRow(panel, _lastFmSecretBox);
+        AddRow(panel, new Label { Text = "Usuario:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        AddRow(panel, _lastFmUserBox);
+        AddRow(panel, new Label { Text = "Session key:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        AddRow(panel, _lastFmSessionKeyBox);
+
+        _lastFmNowPlayingBox = MakeCheck(_strings["LastFmNowPlaying"], _options.LastFmNowPlaying, "LastFmNowPlayingCheck");
+        _lastFmNowPlayingBox.Margin = new Padding(0, 10, 0, 4);
+        AddRow(panel, _lastFmNowPlayingBox);
+
+        var connectButton = new Button
         {
-            Text = "Deja vacío para desactivar el scrobbling. Necesitas una cuenta Last.fm y una API key.",
+            Text = _strings["LastFmConnect"],
             AutoSize = true,
+            MinimumSize = new Size(180, 32),
+            Name = "LastFmConnectButton",
+            AccessibleName = _strings["LastFmConnect"],
+            Margin = new Padding(0, 6, 0, 6),
+        };
+        connectButton.Click += async (_, _) => await ConnectLastFmAsync();
+        AddRow(panel, connectButton);
+
+        AddRow(panel, new Label
+        {
+            Text = _strings["LastFmConnectHint"],
+            AutoSize = true,
+            MaximumSize = new Size(520, 0),
             ForeColor = Color.FromArgb(90, 90, 90),
-            Margin = new Padding(0, 10, 0, 0),
+            Margin = new Padding(0, 6, 0, 0),
             Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
         });
         return panel;
+    }
+
+    /// <summary>
+    /// Autorización de Last.fm en dos pasos: se pide un token, se abre el navegador y, cuando
+    /// el usuario confirma, se cambia el token por la session key. Nada que copiar a mano.
+    /// </summary>
+    private async Task ConnectLastFmAsync()
+    {
+        var apiKey = _lastFmApiKeyBox.Text.Trim();
+        var secret = _lastFmSecretBox.Text.Trim();
+
+        if (apiKey.Length == 0 || secret.Length == 0)
+        {
+            MessageBox.Show(this, _strings["LastFmMissingKeys"], _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _options.LastFmApiKey = apiKey;
+        _options.LastFmSecret = secret;
+
+        var service = new LastFmService(_options, Log.Create(_options, console: false));
+
+        try
+        {
+            var token = await service.RequestTokenAsync(CancellationToken.None);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                MessageBox.Show(this, _strings.T("LastFmConnectFailed", "token"), _ui.AppName,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    LastFmService.AuthUrl(apiKey, token)) { UseShellExecute = true });
+            }
+            catch
+            {
+                // Si no hay navegador, el usuario puede copiar la URL del aviso.
+            }
+
+            var proceed = MessageBox.Show(this, _strings["LastFmAuthorize"], _ui.AppName,
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+
+            if (proceed != DialogResult.OK)
+            {
+                return;
+            }
+
+            var session = await service.CompleteSessionAsync(token, CancellationToken.None);
+            if (session is null)
+            {
+                MessageBox.Show(this, _strings.T("LastFmConnectFailed", "auth.getSession"), _ui.AppName,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _lastFmUserBox.Text = session.Value.User;
+            _lastFmSessionKeyBox.Text = session.Value.SessionKey;
+            _options.LastFmUser = session.Value.User;
+            _options.LastFmSessionKey = session.Value.SessionKey;
+
+            MessageBox.Show(this, _strings.T("LastFmConnected", session.Value.User), _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, _strings.T("LastFmConnectFailed", ex.Message), _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private Control BuildAdvancedTab()
+    {
+        _clearWhenIdle = MakeCheck(_strings["ClearWhenIdle"], _options.ClearWhenIdle, "ClearWhenIdleCheck");
+
+        var idleLabel = new Label
+        {
+            Text = _strings["IdleSecondsLabel"],
+            AutoSize = true,
+            Margin = new Padding(0, 2, 10, 0),
+        };
+
+        _idleSecondsBox = new NumericUpDown
+        {
+            Minimum = 30,
+            Maximum = 86_400,
+            Increment = 30,
+            Value = Math.Clamp(_options.IdleSeconds, 30, 86_400),
+            Width = 90,
+            Name = "IdleSecondsBox",
+            AccessibleName = _strings["IdleSecondsLabel"],
+        };
+
+        var idleRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            Margin = new Padding(0, 2, 0, 8),
+        };
+        idleRow.Controls.Add(idleLabel);
+        idleRow.Controls.Add(_idleSecondsBox);
+
+        _resyncDrift = MakeCheck(_strings["ResyncDrift"], _options.ResyncProgressDrift, "ResyncDriftCheck");
+
+        var channelLabel = new Label
+        {
+            Text = _strings["UpdateChannelLabel"],
+            AutoSize = true,
+            Margin = new Padding(0, 4, 10, 0),
+        };
+
+        _channelBox = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 260,
+            Name = "UpdateChannelBox",
+            AccessibleName = _strings["UpdateChannelLabel"],
+        };
+        _channelBox.Items.Add(new ChannelItem("stable", _strings["ChannelStable"]));
+        _channelBox.Items.Add(new ChannelItem("beta", _strings["ChannelBeta"]));
+        _channelBox.SelectedIndex = _options.UpdateChannel == "beta" ? 1 : 0;
+
+        var channelRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            Margin = new Padding(0, 2, 0, 8),
+        };
+        channelRow.Controls.Add(channelLabel);
+        channelRow.Controls.Add(_channelBox);
+
+        _autoRollback = MakeCheck(_strings["AutoRollback"], _options.AutoRollback, "AutoRollbackCheck");
+
+        // --- Portada propia por aplicación ------------------------------------
+        _overridesList = new ListBox
+        {
+            Dock = DockStyle.Top,
+            Height = 110,
+            IntegralHeight = false,
+            SelectionMode = SelectionMode.One,
+            Name = "OverridesList",
+            AccessibleName = _strings["OverridesGroup"],
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        _overridesList.DoubleClick += (_, _) => LoadSelectedOverride();
+
+        _overridePlayerBox = new TextBox
+        {
+            Width = 190,
+            PlaceholderText = _strings["OverridePlayer"],
+            Name = "OverridePlayerBox",
+            AccessibleName = _strings["OverridePlayer"],
+        };
+
+        _overrideSourceBox = new TextBox
+        {
+            Width = 250,
+            PlaceholderText = _strings["OverrideSource"],
+            Name = "OverrideSourceBox",
+            AccessibleName = _strings["OverrideSource"],
+        };
+
+        var addOverride = new Button
+        {
+            Text = _strings["OverrideAdd"],
+            AutoSize = true,
+            Name = "AddOverrideButton",
+            AccessibleName = _strings["OverrideAdd"],
+        };
+        addOverride.Click += (_, _) => AddOverride();
+
+        var removeOverride = new Button
+        {
+            Text = _strings["OverrideRemove"],
+            AutoSize = true,
+            Name = "RemoveOverrideButton",
+            AccessibleName = _strings["OverrideRemove"],
+        };
+        removeOverride.Click += (_, _) => RemoveOverride();
+
+        var overrideRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            Margin = new Padding(0, 6, 0, 0),
+        };
+        overrideRow.Controls.Add(_overridePlayerBox);
+        overrideRow.Controls.Add(_overrideSourceBox);
+        overrideRow.Controls.Add(addOverride);
+        overrideRow.Controls.Add(removeOverride);
+
+        var overrideHint = new Label
+        {
+            Text = _strings["OverrideHint"],
+            AutoSize = true,
+            MaximumSize = new Size(520, 0),
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Margin = new Padding(0, 8, 0, 0),
+            Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
+        };
+
+        // --- Portada propia por canción ----------------------------------------
+        _trackOverridesList = new ListBox
+        {
+            Dock = DockStyle.Top,
+            Height = 100,
+            IntegralHeight = false,
+            SelectionMode = SelectionMode.One,
+            Name = "TrackOverridesList",
+            AccessibleName = _strings["TrackOverridesGroup"],
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        _trackOverridesList.DoubleClick += (_, _) => LoadSelectedTrackOverride();
+
+        _trackArtistBox = new TextBox
+        {
+            Width = 150,
+            PlaceholderText = _strings["TrackArtist"],
+            Name = "TrackArtistBox",
+            AccessibleName = _strings["TrackArtist"],
+        };
+        _trackTitleBox = new TextBox
+        {
+            Width = 170,
+            PlaceholderText = _strings["TrackTitle"],
+            Name = "TrackTitleBox",
+            AccessibleName = _strings["TrackTitle"],
+        };
+        _trackSourceBox = new TextBox
+        {
+            Width = 240,
+            PlaceholderText = _strings["OverrideSource"],
+            Name = "TrackSourceBox",
+            AccessibleName = _strings["OverrideSource"],
+        };
+
+        var addTrackOverride = new Button
+        {
+            Text = _strings["OverrideAdd"],
+            AutoSize = true,
+            Name = "AddTrackOverrideButton",
+            AccessibleName = _strings["OverrideAdd"],
+        };
+        addTrackOverride.Click += (_, _) => AddTrackOverride();
+
+        var removeTrackOverride = new Button
+        {
+            Text = _strings["OverrideRemove"],
+            AutoSize = true,
+            Name = "RemoveTrackOverrideButton",
+            AccessibleName = _strings["OverrideRemove"],
+        };
+        removeTrackOverride.Click += (_, _) => RemoveTrackOverride();
+
+        var trackOverrideRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            Margin = new Padding(0, 6, 0, 0),
+        };
+        trackOverrideRow.Controls.Add(_trackArtistBox);
+        trackOverrideRow.Controls.Add(_trackTitleBox);
+        trackOverrideRow.Controls.Add(_trackSourceBox);
+        trackOverrideRow.Controls.Add(addTrackOverride);
+        trackOverrideRow.Controls.Add(removeTrackOverride);
+
+        // --- Herramientas -------------------------------------------------------
+        var statsButton = new Button
+        {
+            Text = _strings["OpenStats"],
+            AutoSize = true,
+            Name = "OpenStatsButton",
+            AccessibleName = _strings["OpenStats"],
+            Margin = new Padding(0, 4, 8, 0),
+        };
+        statsButton.Click += (_, _) =>
+        {
+            using var form = new StatsForm(_options);
+            form.ShowDialog(this);
+        };
+
+        var restoreButton = new Button
+        {
+            Text = _strings["OpenBackup"],
+            AutoSize = true,
+            Name = "RestoreBackupButton",
+            AccessibleName = _strings["OpenBackup"],
+            Margin = new Padding(0, 4, 0, 0),
+        };
+        restoreButton.Click += (_, _) =>
+        {
+            var confirm = MessageBox.Show(this, _strings["BackupConfirm"], _ui.AppName,
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+            if (confirm != DialogResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                var path = Path.Combine(AppOptions.LocalDataDirectory, "command.txt");
+                Directory.CreateDirectory(AppOptions.LocalDataDirectory);
+                File.WriteAllText(path, "restore-now");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, _strings.T("BackupFailed", ex.Message), _ui.AppName,
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
+
+        var toolsRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = true,
+            Margin = new Padding(0, 6, 0, 0),
+        };
+        var logButton = new Button
+        {
+            Text = _strings["LogOpen"],
+            AutoSize = true,
+            Name = "OpenLogButton",
+            AccessibleName = _strings["LogOpen"],
+            Margin = new Padding(0, 4, 8, 0),
+        };
+        logButton.Click += (_, _) =>
+        {
+            using var form = new LogViewerForm(_options, Log.ForReading());
+            form.ShowDialog(this);
+        };
+
+        toolsRow.Controls.Add(statsButton);
+        toolsRow.Controls.Add(logButton);
+        toolsRow.Controls.Add(restoreButton);
+
+        var panel = Stack();
+
+        AddRow(panel, Header(_strings["IdleGroup"]));
+        AddRow(panel, _clearWhenIdle);
+        AddRow(panel, idleRow);
+        AddRow(panel, _resyncDrift);
+        AddRow(panel, channelRow);
+        AddRow(panel, _autoRollback);
+        AddRow(panel, Header(_strings["OverridesGroup"]));
+        AddRow(panel, _overridesList);
+        AddRow(panel, overrideRow);
+        AddRow(panel, overrideHint);
+        AddRow(panel, Header(_strings["TrackOverridesGroup"]));
+        AddRow(panel, _trackOverridesList);
+        AddRow(panel, trackOverrideRow);
+        AddRow(panel, new Label
+        {
+            Text = _strings["TrackOverrideHint"],
+            AutoSize = true,
+            MaximumSize = new Size(520, 0),
+            ForeColor = Color.FromArgb(90, 90, 90),
+            Margin = new Padding(0, 8, 0, 0),
+            Font = new Font("Segoe UI", 9f, FontStyle.Italic, GraphicsUnit.Point),
+        });
+        AddRow(panel, Header(_strings["DiagnosticsGroup"]));
+        AddRow(panel, toolsRow);
+
+        RefreshOverrides();
+        RefreshTrackOverrides();
+        return panel;
+    }
+
+    /// <summary>
+    /// Contenedor de una sola columna para las filas de una tarjeta. A diferencia de un
+    /// FlowLayoutPanel, calcula bien su alto y estira los campos al ancho disponible.
+    /// </summary>
+    private static TableLayoutPanel Stack()
+    {
+        var stack = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 0,
+            Margin = new Padding(0),
+            BackColor = CardBg,
+        };
+        stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+        return stack;
+    }
+
+    private static void AddRow(TableLayoutPanel stack, Control control)
+    {
+        // Los campos de texto, listas y filas compuestas ocupan todo el ancho de la tarjeta;
+        // casillas, etiquetas y botones conservan su tamaño natural.
+        if (control is TextBox or ListBox or FlowLayoutPanel or TableLayoutPanel)
+        {
+            control.Dock = DockStyle.Top;
+        }
+
+        var margin = control.Margin;
+        control.Margin = new Padding(margin.Left, margin.Top, margin.Right, Math.Max(margin.Bottom, 6));
+
+        stack.RowCount++;
+        stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        stack.Controls.Add(control, 0, stack.RowCount - 1);
+    }
+
+    private static Label Header(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point),
+        Margin = new Padding(0, 8, 0, 6),
+    };
+
+    private void AddOverride()
+    {
+        var player = _overridePlayerBox.Text.Trim();
+        var source = _overrideSourceBox.Text.Trim();
+
+        var isUrl = Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps;
+
+        if (player.Length == 0 || source.Length == 0 || (!isUrl && !File.Exists(source)))
+        {
+            MessageBox.Show(this, _strings["OverrideInvalid"], _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _overrides[player] = source;
+        _overridePlayerBox.Clear();
+        _overrideSourceBox.Clear();
+        RefreshOverrides();
+    }
+
+    private void RemoveOverride()
+    {
+        if (_overridesList.SelectedItem is not OverrideItem item)
+        {
+            return;
+        }
+
+        _overrides.Remove(item.Player);
+        RefreshOverrides();
+    }
+
+    private void RefreshOverrides()
+    {
+        if (_overridesList is null)
+        {
+            return;
+        }
+
+        _overridesList.BeginUpdate();
+        try
+        {
+            _overridesList.Items.Clear();
+            foreach (var pair in _overrides.OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase))
+            {
+                _overridesList.Items.Add(new OverrideItem(pair.Key, pair.Value));
+            }
+        }
+        finally
+        {
+            _overridesList.EndUpdate();
+        }
+    }
+
+    private void LoadSelectedOverride()
+    {
+        if (_overridesList.SelectedItem is not OverrideItem item)
+        {
+            return;
+        }
+
+        _overridePlayerBox.Text = item.Player;
+        _overrideSourceBox.Text = item.Source;
+    }
+
+    private void AddTrackOverride()
+    {
+        var title = _trackTitleBox.Text.Trim();
+        var artist = _trackArtistBox.Text.Trim();
+        var source = _trackSourceBox.Text.Trim();
+
+        var isUrl = Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps;
+
+        if (title.Length == 0 || source.Length == 0 || (!isUrl && !File.Exists(source)))
+        {
+            MessageBox.Show(this, _strings["TrackOverrideInvalid"], _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        // Sin artista la portada vale para ese título con cualquier intérprete.
+        var key = artist.Length == 0 ? TextMatch.TitleKey(title) : TextMatch.TrackKey(artist, title);
+        _trackOverrides[key] = source;
+        _trackArtistBox.Clear();
+        _trackTitleBox.Clear();
+        _trackSourceBox.Clear();
+        RefreshTrackOverrides();
+    }
+
+    private void RemoveTrackOverride()
+    {
+        if (_trackOverridesList.SelectedItem is not TrackOverrideItem item)
+        {
+            return;
+        }
+
+        _trackOverrides.Remove(item.Key);
+        RefreshTrackOverrides();
+    }
+
+    private void LoadSelectedTrackOverride()
+    {
+        if (_trackOverridesList.SelectedItem is not TrackOverrideItem item)
+        {
+            return;
+        }
+
+        // Las entradas sin artista se guardan solo con el título: hay que distinguirlas o
+        // al reeditar se cargaría el título en la casilla del artista.
+        var parts = item.Key.Split('\u001f');
+        _trackArtistBox.Text = parts.Length > 1 ? parts[0] : "";
+        _trackTitleBox.Text = parts.Length > 1 ? parts[1] : parts[0];
+        _trackSourceBox.Text = item.Source;
+    }
+
+    private void RefreshTrackOverrides()
+    {
+        if (_trackOverridesList is null)
+        {
+            return;
+        }
+
+        _trackOverridesList.BeginUpdate();
+        try
+        {
+            _trackOverridesList.Items.Clear();
+            foreach (var pair in _trackOverrides.OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase))
+            {
+                _trackOverridesList.Items.Add(new TrackOverrideItem(pair.Key, pair.Value));
+            }
+        }
+        finally
+        {
+            _trackOverridesList.EndUpdate();
+        }
+    }
+
+    private void AddTemplate()
+    {
+        var player = _templatePlayerBox.Text.Trim();
+        var details = _templateDetailsBox.Text.Trim();
+        var state = _templateStateBox.Text.Trim();
+
+        if (player.Length == 0 || (details.Length == 0 && state.Length == 0))
+        {
+            MessageBox.Show(this, _strings["PlayerTemplateInvalid"], _ui.AppName,
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var existing = _templates.TryGetValue(player, out var previous) ? previous : null;
+
+        _templates[player] = PresenceTemplate.Create(details, state, existing?.LargeText ?? "");
+        _templatePlayerBox.Clear();
+        _templateDetailsBox.Clear();
+        _templateStateBox.Clear();
+        RefreshTemplates();
+    }
+
+    private void RemoveTemplate()
+    {
+        if (_templatesList.SelectedItem is not TemplateItem item)
+        {
+            return;
+        }
+
+        _templates.Remove(item.Player);
+        RefreshTemplates();
+    }
+
+    private void LoadSelectedTemplate()
+    {
+        if (_templatesList.SelectedItem is not TemplateItem item)
+        {
+            return;
+        }
+
+        _templatePlayerBox.Text = item.Player;
+        _templateDetailsBox.Text = item.Template.Details;
+        _templateStateBox.Text = item.Template.State;
+    }
+
+    private void RefreshTemplates()
+    {
+        if (_templatesList is null)
+        {
+            return;
+        }
+
+        _templatesList.BeginUpdate();
+        try
+        {
+            _templatesList.Items.Clear();
+            foreach (var pair in _templates.OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase))
+            {
+                _templatesList.Items.Add(new TemplateItem(pair.Key, pair.Value));
+            }
+        }
+        finally
+        {
+            _templatesList.EndUpdate();
+        }
     }
 
     protected override void OnFormClosing(FormClosingEventArgs eventArgs)
@@ -686,8 +1478,45 @@ public sealed class SettingsForm : Form
         if (!string.IsNullOrEmpty(select)) _ignoredList.SelectedItem = select;
     }
 
+    private static void RoundCorners(Control control, int radius)
+    {
+        if (radius <= 0) return;
+        Action update = () =>
+        {
+            if (control.Width <= 0 || control.Height <= 0) return;
+            int d = radius * 2;
+            if (d > control.Width) d = control.Width;
+            if (d > control.Height) d = control.Height;
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            path.AddArc(0, 0, d, d, 180, 90);
+            path.AddArc(control.Width - d, 0, d, d, 270, 90);
+            path.AddArc(control.Width - d, control.Height - d, d, d, 0, 90);
+            path.AddArc(0, control.Height - d, d, d, 90, 90);
+            path.CloseFigure();
+            control.Region = new Region(path);
+        };
+        update();
+        control.Resize += (_, _) => update();
+    }
+
     private void ApplyTheme()
     {
+        // Con alto contraste del sistema mandan los colores del sistema: no se pinta nada.
+        if (SystemInformation.HighContrast)
+        {
+            BackColor = SystemColors.Window;
+            ForeColor = SystemColors.WindowText;
+            if (_headerPanel != null)
+            {
+                _headerPanel.BackColor = SystemColors.Control;
+                foreach (Control c in _headerPanel.Controls)
+                {
+                    c.ForeColor = SystemColors.WindowText;
+                }
+            }
+            return;
+        }
+
         bool dark = _darkMode != null && _darkMode.Checked;
         Color pageBg = dark ? Color.FromArgb(32, 33, 36) : PageBg;
         Color cardBg = dark ? Color.FromArgb(41, 42, 45) : Color.White;
@@ -720,10 +1549,15 @@ public sealed class SettingsForm : Form
             gb.BackColor = cardBg;
             gb.ForeColor = fg;
         }
-        else if (c is Panel p)
+        else if (c is Panel p && p.Name == "HeaderPanel")
         {
-            p.BackColor = cardBg;
-            p.ForeColor = fg;
+            p.BackColor = accent;
+            p.ForeColor = Color.White;
+        }
+        else if (c is Panel p2)
+        {
+            p2.BackColor = cardBg;
+            p2.ForeColor = fg;
         }
         else if (c is FlowLayoutPanel flp)
         {
@@ -820,6 +1654,7 @@ public sealed class SettingsForm : Form
         _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
         _tabs.TabPages.Add(MakeTab("Portadas", BuildArtworkTab()));
         _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
+        _tabs.TabPages.Add(MakeTab(_strings["AdvancedTab"], BuildAdvancedTab()));
         if (index >= 0 && index < _tabs.TabPages.Count) _tabs.SelectedIndex = index;
     }
 
@@ -865,6 +1700,20 @@ public sealed class SettingsForm : Form
         _options.LastFmSecret = _lastFmSecretBox.Text.Trim();
         _options.LastFmUser = _lastFmUserBox.Text.Trim();
         _options.LastFmSessionKey = _lastFmSessionKeyBox.Text.Trim();
+        _options.LastFmNowPlaying = _lastFmNowPlayingBox.Checked;
+        _options.ClearWhenIdle = _clearWhenIdle.Checked;
+        _options.IdleSeconds = (int)_idleSecondsBox.Value;
+        _options.ResyncProgressDrift = _resyncDrift.Checked;
+        _options.UpdateChannel = (_channelBox.SelectedItem as ChannelItem)?.Code ?? "stable";
+        _options.AutoRollback = _autoRollback.Checked;
+        _options.CoverOverrides = new Dictionary<string, string>(_overrides, StringComparer.OrdinalIgnoreCase);
+        _options.TrackCoverOverrides = new Dictionary<string, string>(_trackOverrides, StringComparer.OrdinalIgnoreCase);
+        _options.PlayerTemplates = _templates.ToDictionary(
+            pair => pair.Key,
+            pair => PresenceTemplate.Create(pair.Value.Details, pair.Value.State, pair.Value.LargeText),
+            StringComparer.OrdinalIgnoreCase);
+        _options.Artwork.OptimizeUploads = _optimizeUploads.Checked;
+        _options.Artwork.AllowFallbackUploadHost = _fallbackHost.Checked;
         _options.Language = string.IsNullOrWhiteSpace(_selectedLanguage) ? _options.Language : _selectedLanguage;
         _options.Normalize();
 
@@ -908,5 +1757,47 @@ public sealed class SettingsForm : Form
         public string Name { get; }
         public LanguageItem(string code, string name) { Code = code; Name = name; }
         public override string ToString() => Name;
+    }
+
+    private sealed class ChannelItem
+    {
+        public ChannelItem(string code, string name) { Code = code; Name = name; }
+        public string Code { get; }
+        public string Name { get; }
+        public override string ToString() => Name;
+    }
+
+    private sealed class OverrideItem
+    {
+        public OverrideItem(string player, string source) { Player = player; Source = source; }
+        public string Player { get; }
+        public string Source { get; }
+        public override string ToString() => $"{Player}  →  {Source}";
+    }
+
+    private sealed class TrackOverrideItem
+    {
+        public TrackOverrideItem(string key, string source) { Key = key; Source = source; }
+        public string Key { get; }
+        public string Source { get; }
+
+        public override string ToString()
+        {
+            var parts = Key.Split('\u001f');
+
+            // Clave solo por título: no hay separador y parts[0] es el título.
+            var artist = parts.Length > 1 ? parts[0] : "";
+            var title = parts.Length > 1 ? parts[1] : parts[0];
+            var label = string.IsNullOrWhiteSpace(artist) ? title : $"{title} — {artist}";
+            return $"{label}  →  {Source}";
+        }
+    }
+
+    private sealed class TemplateItem
+    {
+        public TemplateItem(string player, PresenceTemplate template) { Player = player; Template = template; }
+        public string Player { get; }
+        public PresenceTemplate Template { get; }
+        public override string ToString() => $"{Player}  →  {Template}";
     }
 }

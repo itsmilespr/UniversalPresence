@@ -538,6 +538,17 @@ public sealed class SmtcMonitor : IDisposable
                         _timelines[aumid] = cache;
                     }
                 }
+
+                // Diagnóstico para reproductores que reportan timelines anómalos
+                // (p. ej. Mornye/media_kit): se registra la lectura cruda para poder
+                // correlacionarla con la barra de Discord.
+                if (timeline.LastUpdatedTime == DateTimeOffset.MinValue
+                    || timeline.LastUpdatedTime > now.AddSeconds(1))
+                {
+                    _log.Debug(
+                        $"Timeline crudo '{aumid}': status={status} position={timeline.Position} " +
+                        $"duration={duration} lastUpdated={timeline.LastUpdatedTime:O} now={now:O}");
+                }
             }
             catch
             {
@@ -549,7 +560,14 @@ public sealed class SmtcMonitor : IDisposable
 
         if (projectPosition && status == PlaybackState.Playing)
         {
-            var drift = now - cache.LastUpdated.ToUniversalTime();
+            // Algunos reproductores (Mornye/media_kit) reportan LastUpdatedTime inválido
+            // (MinValue o un instante futuro). Proyectar en esos casos congelaba o
+            // adelantaba la barra, así que solo se proyecta con un instante válido.
+            var lastUpdatedValid = cache.LastUpdated != DateTimeOffset.MinValue
+                && cache.LastUpdated <= now.AddSeconds(1);
+            var drift = lastUpdatedValid
+                ? now - cache.LastUpdated.ToUniversalTime()
+                : TimeSpan.Zero;
             if (drift > TimeSpan.Zero && drift < TimeSpan.FromMinutes(10))
             {
                 position += drift;
@@ -888,6 +906,77 @@ public sealed class SmtcMonitor : IDisposable
         OnManagerChanged();
     }
 
+    /// <summary>
+    /// Envía una orden de transporte al reproductor activo (o al primero que esté sonando).
+    /// Windows expone estas acciones por SMTC, así que funciona con cualquier reproductor
+    /// que ya aparezca en el sistema, sin integraciones propias.
+    /// </summary>
+    public async Task<bool> TryControlAsync(MediaControlAction action, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        var session = GetControlTargetSession();
+        if (session is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            var ok = action switch
+            {
+                MediaControlAction.TogglePlayPause => await session.TryTogglePlayPauseAsync(),
+                MediaControlAction.NextTrack => await session.TrySkipNextAsync(),
+                MediaControlAction.PreviousTrack => await session.TrySkipPreviousAsync(),
+                _ => false,
+            };
+
+            if (ok)
+            {
+                // El reproductor publicará el cambio por sus eventos; se avisa igualmente
+                // para que la bandeja responda al instante.
+                OnManagerChanged();
+            }
+
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"SMTC control '{action}' failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private GlobalSystemMediaTransportControlsSession? GetControlTargetSession()
+    {
+        try
+        {
+            var current = GetCurrentSessionCached();
+            if (current is not null)
+            {
+                return current;
+            }
+
+            foreach (var candidate in GetSessionsCached())
+            {
+                var status = MapStatus(candidate.GetPlaybackInfo()?.PlaybackStatus);
+                if (status is PlaybackState.Playing or PlaybackState.Paused)
+                {
+                    return candidate;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo elegir la sesión para controlar: {ex.Message}");
+        }
+
+        return null;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -1055,6 +1144,14 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         return media;
+    }
+
+    /// <summary>Órdenes de transporte que Windows expone por SMTC.</summary>
+    public enum MediaControlAction
+    {
+        TogglePlayPause,
+        NextTrack,
+        PreviousTrack,
     }
 
     private sealed class MetadataCache

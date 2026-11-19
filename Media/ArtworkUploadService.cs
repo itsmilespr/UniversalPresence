@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using UniversalPresence.Configuration;
 using UniversalPresence.Infrastructure;
 
@@ -31,6 +32,14 @@ public sealed class ArtworkUploadService
 
     private readonly AppOptions _options;
     private readonly Log _log;
+
+    /// <summary>Cola de subidas fallidas, para reintentarlas cuando vuelva la red.</summary>
+    private readonly string _queuePath =
+        Path.Combine(AppOptions.LocalDataDirectory, "upload-queue.json");
+    private readonly object _queueLock = new();
+
+    private const int MaxQueueEntries = 40;
+    private const int MaxRetriesPerEntry = 12;
 
     // La URL de cada carátula se guarda en disco: la segunda vez que suena una canción ya
     // no hay que volver a subirla, ni siquiera tras reiniciar la aplicación. El TTL es menor
@@ -136,13 +145,8 @@ public sealed class ArtworkUploadService
                 }
             }
 
-            var url = _options.Artwork.UploadMode.Trim().ToLowerInvariant() switch
-            {
-                "imgur" => await UploadToImgurAsync(artwork, cancellationToken).ConfigureAwait(false),
-                "catbox" => await UploadToCatboxAsync(artwork, cancellationToken).ConfigureAwait(false),
-                "selfhosted" => await UploadToSelfHostedAsync(artwork, cancellationToken).ConfigureAwait(false),
-                _ => null,
-            };
+            var payload = await PreparePayloadAsync(artwork, cancellationToken).ConfigureAwait(false);
+            var url = await UploadToConfiguredHostAsync(payload, cancellationToken).ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -153,9 +157,11 @@ public sealed class ArtworkUploadService
                     _cache.Set(key, null);
                 }
 
+                EnqueueForRetry(artwork);
                 return null;
             }
 
+            Dequeue(key);
             _cache.Set(key, url);
             return url;
         }
@@ -172,6 +178,8 @@ public sealed class ArtworkUploadService
                 _cache.Set(key, null);
             }
 
+            // Sin conexión también se apunta: es justo el caso que la cola debe recuperar.
+            EnqueueForRetry(artwork);
             return null;
         }
         finally
@@ -238,7 +246,97 @@ public sealed class ArtworkUploadService
         }
     }
 
-    private async Task<string?> UploadToImgurAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    /// <summary>Imagen ya preparada para subir (posiblemente redimensionada y recomprimida).</summary>
+    private sealed record Payload(byte[] Bytes, string ContentType, string FileName);
+
+    /// <summary>
+    /// Lee la carátula y, si la opción está activa, la reduce antes de subirla. Discord no
+    /// dibuja la imagen a más de ~300 px, así que reenviar un PNG de 3000 px solo hace la
+    /// subida más lenta y aumenta el riesgo de que el host la rechace.
+    /// </summary>
+    private async Task<Payload> PreparePayloadAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    {
+        var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
+
+        if (!_options.Artwork.OptimizeUploads)
+        {
+            return new Payload(bytes, artwork.ContentType, artwork.FileName);
+        }
+
+        var prepared = ImageOptimizer.Prepare(bytes, artwork.ContentType, artwork.FileName);
+
+        if (prepared.Changed)
+        {
+            _log.Debug(
+                $"Carátula optimizada antes de subir: {bytes.Length / 1024} KB → {prepared.Bytes.Length / 1024} KB.");
+        }
+
+        return new Payload(prepared.Bytes, prepared.ContentType, prepared.FileName);
+    }
+
+    /// <summary>
+    /// Sube al host configurado y, si falla y la opción está activa, al host alternativo
+    /// gratuito (Litterbox). Así un host caído o un límite temporal no deja la presencia sin
+    /// portada.
+    /// </summary>
+    private async Task<string?> UploadToConfiguredHostAsync(Payload payload, CancellationToken cancellationToken)
+    {
+        var mode = _options.Artwork.UploadMode.Trim().ToLowerInvariant();
+
+        string? url = null;
+        try
+        {
+            url = await TryUploadAsync(mode, payload, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Sin red, DNS caído o timeout: no es una respuesta del host, pero el host de
+            // respaldo (si es otro servicio) todavía puede servir la carátula.
+            _log.Debug($"El host principal de carátulas no respondió: {ex.Message}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        if (!_options.Artwork.AllowFallbackUploadHost
+            || string.Equals(mode, "catbox", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        _log.Info("El host de portadas no respondió; se intenta el host alternativo (Litterbox).");
+
+        try
+        {
+            return await UploadToCatboxAsync(payload, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"El host alternativo tampoco respondió: {ex.Message}");
+            return null;
+        }
+    }
+
+    private Task<string?> TryUploadAsync(string mode, Payload payload, CancellationToken cancellationToken) =>
+        mode switch
+        {
+            "imgur" => UploadToImgurAsync(payload, cancellationToken),
+            "catbox" => UploadToCatboxAsync(payload, cancellationToken),
+            "selfhosted" => UploadToSelfHostedAsync(payload, cancellationToken),
+            _ => Task.FromResult<string?>(null),
+        };
+
+    private async Task<string?> UploadToImgurAsync(Payload payload, CancellationToken cancellationToken)
     {
         var clientId = _options.Artwork.UploadApiKey.Trim();
 
@@ -250,20 +348,18 @@ public sealed class ArtworkUploadService
             return null;
         }
 
-        if (artwork.ByteCount > ImgurMaxBytes)
+        if (payload.Bytes.Length > ImgurMaxBytes)
         {
             _log.Warn(
-                $"La carátula pesa {artwork.ByteCount / 1024} KB y el límite anónimo de Imgur es " +
+                $"La carátula pesa {payload.Bytes.Length / 1024} KB y el límite anónimo de Imgur es " +
                 "10 MB. Se usa la búsqueda de portada como respaldo.");
             return null;
         }
 
-        var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
-
         using var form = new MultipartFormDataContent();
-        var image = new ByteArrayContent(bytes);
-        image.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
-        form.Add(image, "image", artwork.FileName);
+        var image = new ByteArrayContent(payload.Bytes);
+        image.Headers.ContentType = new MediaTypeHeaderValue(payload.ContentType);
+        form.Add(image, "image", payload.FileName);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.imgur.com/3/image")
         {
@@ -296,22 +392,20 @@ public sealed class ArtworkUploadService
         return null;
     }
 
-    private async Task<string?> UploadToCatboxAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    private async Task<string?> UploadToCatboxAsync(Payload payload, CancellationToken cancellationToken)
     {
         // Catbox (catbox.moe) devolvía archivos vacíos de forma intermitente, así que se
         // usa Litterbox (litterbox.catbox.moe), la variante con caducidad de la misma
         // infraestructura, que sirve el contenido de forma fiable. Caduca a las 72 h; la
         // caché de subida se invalida y se vuelve a subir cuando el proxy de Discord deja
         // de servir la imagen.
-        var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
-
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent("fileupload"), "reqtype");
         form.Add(new StringContent("72h"), "time");
 
-        var file = new ByteArrayContent(bytes);
-        file.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
-        form.Add(file, "fileToUpload", artwork.FileName);
+        var file = new ByteArrayContent(payload.Bytes);
+        file.Headers.ContentType = new MediaTypeHeaderValue(payload.ContentType);
+        form.Add(file, "fileToUpload", payload.FileName);
 
         using var response = await Http
             .PostAsync("https://litterbox.catbox.moe/resources/internals/api.php", form, cancellationToken)
@@ -332,7 +426,7 @@ public sealed class ArtworkUploadService
         return body;
     }
 
-    private async Task<string?> UploadToSelfHostedAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    private async Task<string?> UploadToSelfHostedAsync(Payload payload, CancellationToken cancellationToken)
     {
         var baseUrl = string.IsNullOrWhiteSpace(_options.Artwork.UploadUrl)
             ? "https://universal-presence-covers-s0q6cn.freebuff.site"
@@ -347,11 +441,9 @@ public sealed class ArtworkUploadService
             return null;
         }
 
-        var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
-
         // Raw image body: simpler and immune to multipart parser quirks at the host.
-        var content = new ByteArrayContent(bytes);
-        content.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
+        var content = new ByteArrayContent(payload.Bytes);
+        content.Headers.ContentType = new MediaTypeHeaderValue(payload.ContentType);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/upload")
         {
@@ -383,6 +475,259 @@ public sealed class ArtworkUploadService
 
         _log.Warn("El host propio no devolvió un enlace utilizable.");
         return null;
+    }
+
+    /// <summary>
+    /// Reintenta las subidas que fallaron (sin red, host caído, límite temporal). Se llama al
+    /// arrancar y cada vez que empieza una canción nueva; sube como mucho cinco por pasada
+    /// para no competir con la portada que se está mostrando ahora mismo.
+    /// </summary>
+    public async Task<int> DrainQueueAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.Artwork.UsesUpload)
+        {
+            return 0;
+        }
+
+        List<QueueEntry> snapshot;
+        lock (_queueLock)
+        {
+            snapshot = LoadQueueUnlocked();
+        }
+
+        if (snapshot.Count == 0)
+        {
+            return 0;
+        }
+
+        var uploaded = 0;
+        var doneKeys = new HashSet<string>(StringComparer.Ordinal);
+        var remaining = new List<QueueEntry>();
+
+        foreach (var entry in snapshot)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!File.Exists(entry.FilePath))
+            {
+                // El archivo temporal ya se limpió: la canción volverá a generar su carátula.
+                doneKeys.Add(entry.Key);
+                continue;
+            }
+
+            if (uploaded >= 5)
+            {
+                remaining.Add(entry);
+                continue;
+            }
+
+            entry.Attempts++;
+            var artwork = new ArtworkInfo(entry.FilePath, entry.FileName, entry.ContentType, entry.Hash, entry.ByteCount);
+
+            try
+            {
+                var url = await UploadAsync(artwork, cancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(url))
+                {
+                    uploaded++;
+                    doneKeys.Add(entry.Key);
+                    _log.Info($"Carátula pendiente subida al recuperar la conexión: {url}");
+                    continue;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"Reintento de subida fallido: {ex.Message}");
+            }
+
+            if (entry.Attempts < MaxRetriesPerEntry)
+            {
+                remaining.Add(entry);
+            }
+        }
+
+        lock (_queueLock)
+        {
+            // Se conserva lo que se haya encolado durante la pasada, pero las entradas
+            // reintentadas se sustituyen por su versión actualizada: si se dejara la que
+            // hay en disco, el contador de intentos nunca subiría y una portada que falla
+            // siempre se reintentaría cada diez minutos para siempre.
+            var attempted = new Dictionary<string, QueueEntry>(StringComparer.Ordinal);
+            foreach (var entry in remaining)
+            {
+                attempted[entry.Key] = entry;
+            }
+
+            var merged = new List<QueueEntry>();
+
+            foreach (var item in LoadQueueUnlocked())
+            {
+                if (doneKeys.Contains(item.Key))
+                {
+                    continue;
+                }
+
+                merged.Add(attempted.TryGetValue(item.Key, out var fresh) ? fresh : item);
+            }
+
+            foreach (var entry in remaining)
+            {
+                if (merged.All(item => !string.Equals(item.Key, entry.Key, StringComparison.Ordinal)))
+                {
+                    merged.Add(entry);
+                }
+            }
+
+            if (merged.Count > MaxQueueEntries)
+            {
+                merged = merged
+                    .OrderByDescending(item => item.AddedAt)
+                    .Take(MaxQueueEntries)
+                    .ToList();
+            }
+
+            SaveQueueUnlocked(merged);
+        }
+
+        return uploaded;
+    }
+
+    /// <summary>Número de subidas pendientes (para diagnóstico y autotest).</summary>
+    public int PendingRetryCount
+    {
+        get
+        {
+            lock (_queueLock)
+            {
+                return LoadQueueUnlocked().Count;
+            }
+        }
+    }
+
+    /// <summary>Guarda una carátula para reintentar más tarde. Se ignora si ya está en cola.</summary>
+    private void EnqueueForRetry(ArtworkInfo artwork)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(artwork.FilePath) || !File.Exists(artwork.FilePath))
+            {
+                return;
+            }
+
+            lock (_queueLock)
+            {
+                var entries = LoadQueueUnlocked();
+
+                if (entries.Any(item => string.Equals(item.Hash, artwork.Hash, StringComparison.Ordinal)))
+                {
+                    return;
+                }
+
+                entries.Add(new QueueEntry
+                {
+                    Hash = artwork.Hash,
+                    FilePath = artwork.FilePath,
+                    FileName = artwork.FileName,
+                    ContentType = artwork.ContentType,
+                    ByteCount = artwork.ByteCount,
+                    AddedAt = DateTimeOffset.Now,
+                });
+
+                if (entries.Count > MaxQueueEntries)
+                {
+                    entries = entries
+                        .OrderByDescending(item => item.AddedAt)
+                        .Take(MaxQueueEntries)
+                        .ToList();
+                }
+
+                SaveQueueUnlocked(entries);
+            }
+
+            _log.Debug("Subida pendiente guardada para reintentar cuando vuelva la conexión.");
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo guardar la cola de subidas: {ex.Message}");
+        }
+    }
+
+    private void Dequeue(string key)
+    {
+        try
+        {
+            lock (_queueLock)
+            {
+                var entries = LoadQueueUnlocked();
+                if (entries.RemoveAll(item => string.Equals(item.Hash, key, StringComparison.Ordinal)) > 0)
+                {
+                    SaveQueueUnlocked(entries);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"No se pudo actualizar la cola de subidas: {ex.Message}");
+        }
+    }
+
+    private List<QueueEntry> LoadQueueUnlocked()
+    {
+        try
+        {
+            if (!File.Exists(_queuePath))
+            {
+                return new List<QueueEntry>();
+            }
+
+            var json = File.ReadAllText(_queuePath);
+            return JsonSerializer.Deserialize<List<QueueEntry>>(json) ?? new List<QueueEntry>();
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"Cola de subidas ilegible, se descarta: {ex.Message}");
+            return new List<QueueEntry>();
+        }
+    }
+
+    private void SaveQueueUnlocked(List<QueueEntry> entries)
+    {
+        Directory.CreateDirectory(AppOptions.LocalDataDirectory);
+
+        if (entries.Count == 0)
+        {
+            if (File.Exists(_queuePath))
+            {
+                File.Delete(_queuePath);
+            }
+
+            return;
+        }
+
+        File.WriteAllText(_queuePath, JsonSerializer.Serialize(entries, QueueJson));
+    }
+
+    private static readonly JsonSerializerOptions QueueJson = new() { WriteIndented = true };
+
+    private sealed class QueueEntry
+    {
+        public string Hash { get; set; } = "";
+        public string FilePath { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public string ContentType { get; set; } = "image/jpeg";
+        public int ByteCount { get; set; }
+        public DateTimeOffset AddedAt { get; set; }
+        public int Attempts { get; set; }
+
+        /// <summary>Identidad estable de la entrada; la caché usa el hash y el nombre como respaldo.</summary>
+        [JsonIgnore]
+        public string Key => !string.IsNullOrWhiteSpace(Hash)
+            ? Hash
+            : !string.IsNullOrWhiteSpace(FileName) ? FileName : FilePath;
     }
 
     private static async Task<byte[]> ReadArtworkAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
