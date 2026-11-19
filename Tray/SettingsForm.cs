@@ -30,6 +30,7 @@ public sealed class SettingsForm : Form
     private NumericUpDown _pauseRefresh = null!;
     private CheckBox _darkMode = null!;
     private ComboBox _languageBox = null!;
+    private string _selectedLanguage = "";
 
     // --- Paused tab -------------------------------------------------------------
     private CheckBox _showPausedMedia = null!;
@@ -64,6 +65,7 @@ public sealed class SettingsForm : Form
     public SettingsForm(AppOptions options, Action onSaved)
     {
         _options = options;
+        _selectedLanguage = string.IsNullOrWhiteSpace(options.Language) ? "en" : options.Language.Trim();
         _onSaved = onSaved;
         _ignored = options.IgnoredPlayers.ToList();
         _ui = UiText.For(options.Language);
@@ -88,11 +90,11 @@ public sealed class SettingsForm : Form
             Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
             Padding = new Point(12, 6),
         };
-        _tabs.TabPages.Add(MakeTab("Jugadores", BuildPlayersTab()));
-        _tabs.TabPages.Add(MakeTab("Comportamiento", BuildBehaviorTab()));
-        _tabs.TabPages.Add(MakeTab("Pausa", BuildPausedTab()));
-        _tabs.TabPages.Add(MakeTab("Presencia", BuildPresenceTab()));
-        _tabs.TabPages.Add(MakeTab("Last.fm", BuildLastFmTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.PlayersTab, BuildPlayersTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.BehaviorTab, BuildBehaviorTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.PausedTab, BuildPausedTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
 
         // ---- Bottom buttons ----------------------------------------------------
         var buttons = new FlowLayoutPanel
@@ -340,7 +342,7 @@ public sealed class SettingsForm : Form
         {
             _languageBox.Items.Add(new LanguageItem(code, name));
         }
-        var current = string.IsNullOrWhiteSpace(_options.Language) ? "en" : _options.Language.Trim().ToLowerInvariant();
+        var current = string.IsNullOrWhiteSpace(_selectedLanguage) ? "en" : _selectedLanguage.Trim().ToLowerInvariant();
         for (var i = 0; i < _languageBox.Items.Count; i++)
         {
             if (_languageBox.Items[i] is LanguageItem li
@@ -351,6 +353,15 @@ public sealed class SettingsForm : Form
             }
         }
         if (_languageBox.SelectedIndex < 0) _languageBox.SelectedIndex = 0;
+
+        _languageBox.SelectedIndexChanged += (_, _) =>
+        {
+            if (_languageBox.SelectedItem is not LanguageItem li) return;
+            _selectedLanguage = li.Code;
+            _ui = UiText.For(li.Code);
+            Text = _ui.SettingsTitle;
+            BeginInvoke(new Action(RebuildTabs));
+        };
 
         var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
         var header = new Label { Text = _ui.BehaviorGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
@@ -644,6 +655,18 @@ public sealed class SettingsForm : Form
         }
     }
 
+    private void RebuildTabs()
+    {
+        var index = _tabs.SelectedIndex;
+        _tabs.TabPages.Clear();
+        _tabs.TabPages.Add(MakeTab(_ui.PlayersTab, BuildPlayersTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.BehaviorTab, BuildBehaviorTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.PausedTab, BuildPausedTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
+        _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
+        if (index >= 0 && index < _tabs.TabPages.Count) _tabs.SelectedIndex = index;
+    }
+
     private bool SaveSettings()
     {
         var pending = _newPlayer.Text.Trim();
@@ -674,10 +697,7 @@ public sealed class SettingsForm : Form
         _options.LastFmSecret = _lastFmSecretBox.Text.Trim();
         _options.LastFmUser = _lastFmUserBox.Text.Trim();
         _options.LastFmSessionKey = _lastFmSessionKeyBox.Text.Trim();
-        if (_languageBox.SelectedItem is LanguageItem li)
-        {
-            _options.Language = li.Code;
-        }
+        _options.Language = string.IsNullOrWhiteSpace(_selectedLanguage) ? _options.Language : _selectedLanguage;
         _options.Normalize();
 
         try { _options.Save(); }

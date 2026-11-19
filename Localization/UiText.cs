@@ -49,7 +49,12 @@ public sealed record UiText(
     string Hint,
     string Save,
     string Cancel,
-    string SaveFailed)
+    string SaveFailed,
+    string PlayersTab,
+    string BehaviorTab,
+    string PausedTab,
+    string PresenceTab,
+    string LastFmTab)
 {
     public static readonly UiText English = new(
         "Starting…",
@@ -88,7 +93,8 @@ public sealed record UiText(
         "UniversalPresence icon key (Discord portal):",
         "Changes are saved to config.json and applied instantly, without closing the app.",
         "Save", "Cancel",
-        "Could not save settings:\n{0}");
+        "Could not save settings:\n{0}",
+        "Players", "Behavior", "Paused", "Presence", "Last.fm");
 
     public static UiText For(string? language)
     {
@@ -139,7 +145,8 @@ public sealed record UiText(
         "Clave del icono de UniversalPresence (portal de Discord):",
         "Los cambios se guardan en config.json y se aplican al instante, sin cerrar la aplicación.",
         "Guardar", "Cancelar",
-        "No se pudo guardar la configuración:\n{0}");
+        "No se pudo guardar la configuración:\n{0}",
+        "Jugadores", "Comportamiento", "Pausa", "Presencia", "Last.fm");
 
     public static readonly UiText Portuguese = new(
         "Iniciando…",
@@ -178,5 +185,6 @@ public sealed record UiText(
         "Chave do ícone do UniversalPresence (portal do Discord):",
         "As alterações são salvas em config.json e aplicadas na hora, sem fechar o app.",
         "Salvar", "Cancelar",
-        "Não foi possível salvar as configurações:\n{0}");
+        "Não foi possível salvar as configurações:\n{0}",
+        "Reprodutores", "Comportamento", "Pausado", "Presença", "Last.fm");
 }
