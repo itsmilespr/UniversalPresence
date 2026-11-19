@@ -338,6 +338,10 @@ public sealed class SmtcMonitor : IDisposable
                     return null;
                 }
 
+                // Se ancla el instante de captura a la lectura del timeline, no al final del
+                // read (tras extraer/subir la portada): así la posición y CapturedAt quedan
+                // sincronizados y la barra no se adelanta/atrasa por el tiempo de artwork.
+                var capturedAt = DateTimeOffset.UtcNow;
                 var (position, duration, lastUpdated) = ReadTimelineCached(
                     session, aumid, status, projectPosition, force: !projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
@@ -405,7 +409,7 @@ public sealed class SmtcMonitor : IDisposable
                     Position = position,
                     Duration = duration,
                     Status = status,
-                    CapturedAt = DateTimeOffset.UtcNow,
+                    CapturedAt = capturedAt,
                     SourceUpdatedAt = lastUpdated,
                     IsCurrentSession = aumid.Length > 0 && string.Equals(aumid, currentAumid, StringComparison.OrdinalIgnoreCase),
                     Artwork = artwork,
