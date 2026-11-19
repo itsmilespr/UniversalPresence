@@ -15,7 +15,7 @@ namespace UniversalPresence.Tray;
 public sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly AppOptions _options;
-    private readonly UiText _ui;
+    private UiText _ui;
     private readonly Log _log;
     private readonly PresenceEngine _engine;
     private readonly NotifyIcon _notifyIcon;
@@ -195,6 +195,7 @@ public sealed class TrayApplicationContext : ApplicationContext
             using var form = new SettingsForm(_options, () =>
             {
                 _engine.ApplySettings();
+                _ui = UiText.For(_options.Language);
                 ApplyHotkeys();
                 ApplyOverlay();
             });

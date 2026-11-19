@@ -29,6 +29,7 @@ public sealed class SettingsForm : Form
     private CheckBox _showProgress = null!;
     private NumericUpDown _pauseRefresh = null!;
     private CheckBox _darkMode = null!;
+    private ComboBox _languageBox = null!;
 
     // --- Paused tab -------------------------------------------------------------
     private CheckBox _showPausedMedia = null!;
@@ -320,9 +321,42 @@ public sealed class SettingsForm : Form
         pauseRow.Controls.Add(pauseLabel);
         pauseRow.Controls.Add(_pauseRefresh);
 
+        // Idioma de la presencia y de la interfaz.
+        var langLabel = new Label
+        {
+            Text = "Idioma (presencia y ventana):",
+            AutoSize = true,
+            Margin = new Padding(0, 0, 10, 4),
+        };
+        _languageBox = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 260,
+            Name = "LanguageBox",
+            Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point),
+            Margin = new Padding(0, 0, 0, 8),
+        };
+        foreach (var (code, name) in LanguageOptions())
+        {
+            _languageBox.Items.Add(new LanguageItem(code, name));
+        }
+        var current = string.IsNullOrWhiteSpace(_options.Language) ? "en" : _options.Language.Trim().ToLowerInvariant();
+        for (var i = 0; i < _languageBox.Items.Count; i++)
+        {
+            if (_languageBox.Items[i] is LanguageItem li
+                && string.Equals(li.Code, current, StringComparison.OrdinalIgnoreCase))
+            {
+                _languageBox.SelectedIndex = i;
+                break;
+            }
+        }
+        if (_languageBox.SelectedIndex < 0) _languageBox.SelectedIndex = 0;
+
         var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
         var header = new Label { Text = _ui.BehaviorGroup, AutoSize = true, Font = new Font("Segoe UI", 10f, FontStyle.Bold, GraphicsUnit.Point), Margin = new Padding(0, 0, 0, 8) };
         panel.Controls.Add(header);
+        panel.Controls.Add(langLabel);
+        panel.Controls.Add(_languageBox);
         panel.Controls.Add(_appendPlayer);
         panel.Controls.Add(_usePlayerNameAsActivity);
         panel.Controls.Add(_hideIfNoArtwork);
@@ -640,6 +674,10 @@ public sealed class SettingsForm : Form
         _options.LastFmSecret = _lastFmSecretBox.Text.Trim();
         _options.LastFmUser = _lastFmUserBox.Text.Trim();
         _options.LastFmSessionKey = _lastFmSessionKeyBox.Text.Trim();
+        if (_languageBox.SelectedItem is LanguageItem li)
+        {
+            _options.Language = li.Code;
+        }
         _options.Normalize();
 
         try { _options.Save(); }
@@ -652,5 +690,35 @@ public sealed class SettingsForm : Form
         WindowsAutostart.Apply(_options.StartWithWindows);
         _onSaved();
         return true;
+    }
+
+    private static IEnumerable<(string Code, string Name)> LanguageOptions()
+    {
+        yield return ("en", "English");
+        yield return ("es", "Español");
+        yield return ("pt", "Português");
+        yield return ("fr", "Français");
+        yield return ("de", "Deutsch");
+        yield return ("it", "Italiano");
+        yield return ("nl", "Nederlands");
+        yield return ("pl", "Polski");
+        yield return ("ru", "Русский");
+        yield return ("uk", "Українська");
+        yield return ("tr", "Türkçe");
+        yield return ("ja", "日本語");
+        yield return ("ko", "한국어");
+        yield return ("id", "Bahasa Indonesia");
+        yield return ("sv", "Svenska");
+        yield return ("cs", "Čeština");
+        yield return ("zh", "简体中文");
+        yield return ("zh-TW", "繁體中文");
+    }
+
+    private sealed class LanguageItem
+    {
+        public string Code { get; }
+        public string Name { get; }
+        public LanguageItem(string code, string name) { Code = code; Name = name; }
+        public override string ToString() => Name;
     }
 }
