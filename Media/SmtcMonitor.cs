@@ -42,6 +42,7 @@ public sealed class SmtcMonitor : IDisposable
     private readonly Dictionary<string, MetadataCache> _metadata = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PlaybackCache> _playback = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimelineCache> _timelines = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _coverDecisionCache = new(StringComparer.Ordinal);
 
     private IReadOnlyList<GlobalSystemMediaTransportControlsSession> _sessions =
         Array.Empty<GlobalSystemMediaTransportControlsSession>();
@@ -346,20 +347,43 @@ public sealed class SmtcMonitor : IDisposable
                 // (p. ej. TikTok u otros sitios que sí rellenan el artwork del Media Session)
                 // y se conserva para que se suba/muestre.
                 IRandomAccessStreamReference? thumbnail;
+                string artworkDecision;
                 if (isTikTok)
                 {
                     // TikTok no está en los catálogos: se confía en su miniatura SMTC.
                     thumbnail = media?.Thumbnail;
+                    artworkDecision = "tiktok";
                 }
                 else if (isBrowser)
                 {
-                    thumbnail = await IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken).ConfigureAwait(false)
-                        ? media?.Thumbnail
-                        : null;
+                    var cacheKey = $"{aumid}|{mediaKey}";
+                    bool isReal;
+                    lock (_metadataGate)
+                    {
+                        if (!_coverDecisionCache.TryGetValue(cacheKey, out isReal))
+                        {
+                            isReal = false;
+                        }
+                    }
+
+                    if (!_coverDecisionCache.ContainsKey(cacheKey))
+                    {
+                        isReal = await IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken).ConfigureAwait(false);
+                        lock (_metadataGate)
+                        {
+                            if (_coverDecisionCache.Count > 512) _coverDecisionCache.Clear();
+                            _coverDecisionCache[cacheKey] = isReal;
+                        }
+                        _log.Debug($"Portada de navegador para '{aumid}': {(isReal ? "real (>=200 px)" : "ignorada (icono/favicon)")}");
+                    }
+
+                    thumbnail = isReal ? media?.Thumbnail : null;
+                    artworkDecision = isReal ? "browser-real" : "browser-ignored";
                 }
                 else
                 {
                     thumbnail = media?.Thumbnail;
+                    artworkDecision = "smtc";
                 }
                 var artwork = await _artwork.GetAsync(thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
 
@@ -385,6 +409,7 @@ public sealed class SmtcMonitor : IDisposable
                     SourceUpdatedAt = lastUpdated,
                     IsCurrentSession = aumid.Length > 0 && string.Equals(aumid, currentAumid, StringComparison.OrdinalIgnoreCase),
                     Artwork = artwork,
+                    ArtworkDecision = artworkDecision,
                 };
             }
             catch (OperationCanceledException)

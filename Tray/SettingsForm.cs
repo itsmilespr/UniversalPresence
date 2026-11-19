@@ -1,5 +1,6 @@
 using System.Drawing;
 using UniversalPresence.Configuration;
+using UniversalPresence.Infrastructure;
 using UniversalPresence.Localization;
 
 namespace UniversalPresence.Tray;
@@ -31,6 +32,8 @@ public sealed class SettingsForm : Form
     private CheckBox _darkMode = null!;
     private ComboBox _languageBox = null!;
     private string _selectedLanguage = "";
+    private ComboBox _profileBox = null!;
+    private TextBox _newProfileName = null!;
 
     // --- Paused tab -------------------------------------------------------------
     private CheckBox _showPausedMedia = null!;
@@ -375,6 +378,61 @@ public sealed class SettingsForm : Form
         panel.Controls.Add(_showProgress);
         panel.Controls.Add(_darkMode);
         panel.Controls.Add(pauseRow);
+
+        // Perfiles de configuración.
+        var profileLabel = new Label { Text = "Profile:", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
+        _profileBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 180, Name = "ProfileBox" };
+        _newProfileName = new TextBox { Width = 140, PlaceholderText = "new profile", Name = "NewProfileBox" };
+        var switchButton = new Button { Text = "Switch", AutoSize = true, Name = "SwitchProfileButton" };
+        var newButton = new Button { Text = "New", AutoSize = true, Name = "NewProfileButton" };
+        var deleteButton = new Button { Text = "Delete", AutoSize = true, Name = "DeleteProfileButton" };
+
+        RefreshProfileList();
+
+        switchButton.Click += (_, _) =>
+        {
+            if (_profileBox.SelectedItem is not string name) return;
+            if (ProfileService.Switch(_options, name))
+            {
+                _selectedLanguage = _options.Language;
+                _onSaved();
+                MessageBox.Show(this, $"Switched to profile '{name}'.", _ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        };
+        newButton.Click += (_, _) =>
+        {
+            var name = _newProfileName.Text.Trim();
+            if (name.Length == 0) return;
+            try
+            {
+                ProfileService.Save(_options, name);
+                ProfileService.Switch(_options, name);
+                _selectedLanguage = _options.Language;
+                RefreshProfileList();
+                _newProfileName.Clear();
+                _onSaved();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, _ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        };
+        deleteButton.Click += (_, _) =>
+        {
+            if (_profileBox.SelectedItem is not string name || name == "default") return;
+            ProfileService.Delete(name);
+            RefreshProfileList();
+        };
+
+        var profileRow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 4, 0, 0) };
+        profileRow.Controls.Add(profileLabel);
+        profileRow.Controls.Add(_profileBox);
+        profileRow.Controls.Add(_newProfileName);
+        profileRow.Controls.Add(switchButton);
+        profileRow.Controls.Add(newButton);
+        profileRow.Controls.Add(deleteButton);
+        panel.Controls.Add(profileRow);
+
         return panel;
     }
 
@@ -652,6 +710,29 @@ public sealed class SettingsForm : Form
         foreach (Control child in c.Controls)
         {
             ApplyThemeTo(child, pageBg, cardBg, fg, accent, dark);
+        }
+    }
+
+    private void RefreshProfileList()
+    {
+        if (_profileBox is null) return;
+        _profileBox.Items.Clear();
+        foreach (var name in ProfileService.List())
+        {
+            _profileBox.Items.Add(name);
+        }
+        var current = string.IsNullOrWhiteSpace(_options.ActiveProfile) ? "default" : _options.ActiveProfile;
+        for (var i = 0; i < _profileBox.Items.Count; i++)
+        {
+            if (string.Equals(_profileBox.Items[i]?.ToString(), current, StringComparison.OrdinalIgnoreCase))
+            {
+                _profileBox.SelectedIndex = i;
+                break;
+            }
+        }
+        if (_profileBox.SelectedIndex < 0 && _profileBox.Items.Count > 0)
+        {
+            _profileBox.SelectedIndex = 0;
         }
     }
 

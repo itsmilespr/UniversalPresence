@@ -22,6 +22,7 @@ public sealed class AppOptions
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    public static JsonSerializerOptions SerializerOptionsPublic => SerializerOptions;
     /// <summary>Discord application (client) id. Create an app at https://discord.com/developers/applications.</summary>
     public string DiscordClientId { get; set; } = "1558323929766953042";
 
@@ -32,6 +33,7 @@ public sealed class AppOptions
     /// y las carátulas salen como placeholder.
     /// Vacío = se envían las URLs externas directas (Discord las muestra como placeholder).
     /// </summary>
+    [JsonIgnore]
     public string DiscordAccessToken { get; set; } = "";
 
     /// <summary>
@@ -39,9 +41,11 @@ public sealed class AppOptions
     /// el access token sin volver a autorizar. Si la aplicación no está marcada como
     /// «Public Client» en el portal, la renovación necesita <see cref="DiscordClientSecret"/>.
     /// </summary>
+    [JsonIgnore]
     public string DiscordRefreshToken { get; set; } = "";
 
     /// <summary>Client secret opcional, solo para renovar el token en apps no públicas.</summary>
+    [JsonIgnore]
     public string DiscordClientSecret { get; set; } = "";
 
     /// <summary>
@@ -188,15 +192,18 @@ public sealed class AppOptions
     public bool FirstRunCompleted { get; set; }
 
     /// <summary>API key de Last.fm para scrobbling (vacío = desactivado).</summary>
+    [JsonIgnore]
     public string LastFmApiKey { get; set; } = "";
 
     /// <summary>Secreto compartido de Last.fm (necesario para firmar las peticiones).</summary>
+    [JsonIgnore]
     public string LastFmSecret { get; set; } = "";
 
     /// <summary>Usuario de Last.fm para scrobbling (vacío = desactivado).</summary>
     public string LastFmUser { get; set; } = "";
 
     /// <summary>Token de sesión de Last.fm (se obtiene autorizando una vez).</summary>
+    [JsonIgnore]
     public string LastFmSessionKey { get; set; } = "";
 
     /// <summary>Muestra la ventana flotante "now playing".</summary>
@@ -211,8 +218,14 @@ public sealed class AppOptions
     /// <summary>Rollback automático si la app no arranca correctamente.</summary>
     public bool AutoRollback { get; set; } = true;
 
+    /// <summary>Load third-party plugins from %LOCALAPPDATA%\UniversalPresence\plugins.</summary>
+    public bool PluginsEnabled { get; set; }
+
     /// <summary>Asset key for the small player badge (upload it in the Discord Developer Portal). Empty = no badge.</summary>
     public string PlayerAssetKey { get; set; } = "";
+
+    /// <summary>Schema version for config migration.</summary>
+    public int ConfigVersion { get; set; } = 2;
 
     public ArtworkOptions Artwork { get; set; } = new();
 
@@ -239,7 +252,10 @@ public sealed class AppOptions
     public string LogLevel { get; set; } = "Info";
 
     [JsonIgnore]
-    public string ConfigPath { get; private set; } = DefaultConfigPath;
+    public string ConfigPath { get; internal set; } = DefaultConfigPath;
+
+    [JsonIgnore]
+    public string SecretsPath => Path.Combine(Path.GetDirectoryName(ConfigPath) ?? "", "secrets.dpapi.json");
 
     [JsonIgnore]
     public static string DefaultConfigPath { get; } = Path.Combine(
@@ -254,11 +270,42 @@ public sealed class AppOptions
         var path = cli.ConfigPath ?? (File.Exists(portablePath) ? portablePath : DefaultConfigPath);
         AppOptions options;
 
+        // Secretos legacy que pudieran estar aún en el JSON (versiones anteriores).
+        string legacyDiscordAccess = "";
+        string legacyDiscordRefresh = "";
+        string legacyDiscordSecret = "";
+        string legacyLastFmApi = "";
+        string legacyLastFmSecret = "";
+        string legacyLastFmSession = "";
+        int legacyVersion = 0;
+
         try
         {
             if (File.Exists(path))
             {
                 var json = File.ReadAllText(path);
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    legacyDiscordAccess = GetString(root, "discordAccessToken");
+                    legacyDiscordRefresh = GetString(root, "discordRefreshToken");
+                    legacyDiscordSecret = GetString(root, "discordClientSecret");
+                    legacyLastFmApi = GetString(root, "lastFmApiKey");
+                    legacyLastFmSecret = GetString(root, "lastFmSecret");
+                    legacyLastFmSession = GetString(root, "lastFmSessionKey");
+                    if (root.TryGetProperty("configVersion", out var versionElement)
+                        && versionElement.ValueKind == JsonValueKind.Number)
+                    {
+                        legacyVersion = versionElement.GetInt32();
+                    }
+                }
+                catch
+                {
+                    // El JSON puede estar dañado; se intenta la deserialización normal.
+                }
+
                 options = JsonSerializer.Deserialize<AppOptions>(json, SerializerOptions) ?? new AppOptions();
             }
             else
@@ -274,11 +321,84 @@ public sealed class AppOptions
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Could not read the configuration ({path}): {ex.Message}. Using defaults.");
-            options = new AppOptions();
+            // Último recurso: intentar el backup atómico anterior.
+            try
+            {
+                var backup = path + ".bak";
+                if (File.Exists(backup))
+                {
+                    var backupJson = File.ReadAllText(backup);
+                    options = JsonSerializer.Deserialize<AppOptions>(backupJson, SerializerOptions) ?? new AppOptions();
+                    Console.Error.WriteLine($"Configuration restored from backup ({backup}).");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"Could not read the configuration ({path}): {ex.Message}. Using defaults.");
+                    options = new AppOptions();
+                }
+            }
+            catch
+            {
+                Console.Error.WriteLine($"Could not read the configuration ({path}): {ex.Message}. Using defaults.");
+                options = new AppOptions();
+            }
         }
 
         options.ConfigPath = path;
+
+        // Perfil activo: si no es el predeterminado, cargar su archivo.
+        if (cli.ConfigPath is null
+            && !string.Equals(options.ActiveProfile, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            var profilePath = ProfileService.PathFor(options.ActiveProfile);
+            if (File.Exists(profilePath))
+            {
+                try
+                {
+                    var profileJson = File.ReadAllText(profilePath);
+                    var profileOptions = JsonSerializer.Deserialize<AppOptions>(profileJson, SerializerOptions) ?? new AppOptions();
+                    profileOptions.ConfigPath = profilePath;
+                    profileOptions.ActiveProfile = options.ActiveProfile;
+                    profileOptions.Normalize();
+                    options = profileOptions;
+                }
+                catch
+                {
+                    options.ActiveProfile = "default";
+                    options.ConfigPath = AppOptions.DefaultConfigPath;
+                }
+            }
+            else
+            {
+                options.ActiveProfile = "default";
+            }
+        }
+
+        // Migración de secretos legacy (plaintext en config.json) al almacén protegido.
+        if (string.IsNullOrWhiteSpace(options.DiscordAccessToken)) options.DiscordAccessToken = legacyDiscordAccess;
+        if (string.IsNullOrWhiteSpace(options.DiscordRefreshToken)) options.DiscordRefreshToken = legacyDiscordRefresh;
+        if (string.IsNullOrWhiteSpace(options.DiscordClientSecret)) options.DiscordClientSecret = legacyDiscordSecret;
+        if (string.IsNullOrWhiteSpace(options.LastFmApiKey)) options.LastFmApiKey = legacyLastFmApi;
+        if (string.IsNullOrWhiteSpace(options.LastFmSecret)) options.LastFmSecret = legacyLastFmSecret;
+        if (string.IsNullOrWhiteSpace(options.LastFmSessionKey)) options.LastFmSessionKey = legacyLastFmSession;
+
+        // Migraciones por versión.
+        if (legacyVersion < 2)
+        {
+            options.ConfigVersion = 2;
+        }
+
+        LoadSecrets(options);
+
+        if (cli.ConfigPath is null
+            && !File.Exists(Path.Combine(AppContext.BaseDirectory, "config.json"))
+            && (legacyDiscordAccess.Length > 0 || legacyDiscordRefresh.Length > 0
+                || legacyDiscordSecret.Length > 0 || legacyLastFmApi.Length > 0
+                || legacyLastFmSecret.Length > 0 || legacyLastFmSession.Length > 0))
+        {
+            // El config.json antiguo contenía secretos en claro: se reescribe sin ellos.
+            try { options.Save(); } catch { }
+        }
 
         if (!string.IsNullOrWhiteSpace(cli.ClientId))
         {
@@ -405,9 +525,107 @@ public sealed class AppOptions
     /// <summary>Persists the current values; throws so the UI can report a failure.</summary>
     public string Save()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
-        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, SerializerOptions));
+        SaveSecrets();
+
+        var directory = Path.GetDirectoryName(ConfigPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var temp = ConfigPath + ".tmp";
+        var backup = ConfigPath + ".bak";
+        var json = JsonSerializer.Serialize(this, SerializerOptions);
+        File.WriteAllText(temp, json);
+
+        try
+        {
+            if (File.Exists(ConfigPath))
+            {
+                File.Replace(temp, ConfigPath, backup, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                File.Move(temp, ConfigPath);
+            }
+        }
+        catch
+        {
+            if (File.Exists(temp))
+            {
+                File.Move(temp, ConfigPath, overwrite: true);
+            }
+        }
+
         return ConfigPath;
+    }
+
+    private static string GetString(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty(name, out var element)
+            || element.ValueKind != JsonValueKind.String)
+        {
+            return "";
+        }
+
+        return element.GetString() ?? "";
+    }
+
+    private void SaveSecrets()
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(SecretsPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var payload = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["discordAccessToken"] = SecretProtector.Protect(DiscordAccessToken),
+                ["discordRefreshToken"] = SecretProtector.Protect(DiscordRefreshToken),
+                ["discordClientSecret"] = SecretProtector.Protect(DiscordClientSecret),
+                ["lastFmApiKey"] = SecretProtector.Protect(LastFmApiKey),
+                ["lastFmSecret"] = SecretProtector.Protect(LastFmSecret),
+                ["lastFmSessionKey"] = SecretProtector.Protect(LastFmSessionKey),
+            };
+
+            File.WriteAllText(
+                SecretsPath,
+                JsonSerializer.Serialize(payload, SerializerOptions));
+        }
+        catch
+        {
+            // Never let secret storage take the app down; the main config still saves.
+        }
+    }
+
+    private static void LoadSecrets(AppOptions options)
+    {
+        try
+        {
+            if (!File.Exists(options.SecretsPath))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(options.SecretsPath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            options.DiscordAccessToken = SecretProtector.Unprotect(GetString(root, "discordAccessToken"));
+            options.DiscordRefreshToken = SecretProtector.Unprotect(GetString(root, "discordRefreshToken"));
+            options.DiscordClientSecret = SecretProtector.Unprotect(GetString(root, "discordClientSecret"));
+            options.LastFmApiKey = SecretProtector.Unprotect(GetString(root, "lastFmApiKey"));
+            options.LastFmSecret = SecretProtector.Unprotect(GetString(root, "lastFmSecret"));
+            options.LastFmSessionKey = SecretProtector.Unprotect(GetString(root, "lastFmSessionKey"));
+        }
+        catch
+        {
+            // Corrupt secret store: leave the values empty instead of crashing.
+        }
     }
 
     public static string LocalDataDirectory => Path.Combine(

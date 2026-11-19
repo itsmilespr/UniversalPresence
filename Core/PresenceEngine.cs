@@ -2,10 +2,12 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using System.Text;
 using UniversalPresence.Configuration;
 using UniversalPresence.Discord;
 using UniversalPresence.Infrastructure;
 using UniversalPresence.Media;
+using UniversalPresence.Plugins;
 
 namespace UniversalPresence.Core;
 
@@ -43,6 +45,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private readonly DiscordTokenService _discordTokens;
     private readonly ExternalAssetsService _externalAssets;
     private readonly ProgramIconAssetService _programIcons;
+    private readonly PluginHost _plugins;
     private readonly ChangeSignal _signal = new();
     private readonly ChangeSignal _publishSignal = new();
     private readonly CancellationTokenSource _cts = new();
@@ -101,6 +104,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _discordTokens = new DiscordTokenService(options, log);
         _externalAssets = new ExternalAssetsService(options, _discordTokens, log);
         _programIcons = new ProgramIconAssetService(options, _artworkUpload, log);
+        _plugins = new PluginHost(options, log);
     }
 
     /// <summary>Raised when the tray needs to repaint; fires on a worker thread.</summary>
@@ -242,6 +246,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 try
                 {
                     MaybeTrimMemory();
+                    Telemetry.MaybeLog(_log);
 
                     // Modo juego: si hay una app a pantalla completa en primer plano, pausar presencia.
                     if (_options.GamingMode)
@@ -378,6 +383,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     }
 
                     _lastSnapshot = snapshot;
+                    _plugins.Notify(snapshot);
 
                     if (jumped && _desiredKey is not null && _desiredKey != IdleKey)
                     {
@@ -1295,22 +1301,93 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
 
     private static bool IsForegroundFullscreen()
     {
         try
         {
             var hwnd = GetForegroundWindow();
-            if (hwnd == IntPtr.Zero) return false;
-            if (!GetWindowRect(hwnd, out var r)) return false;
-            var screen = System.Windows.Forms.Screen.PrimaryScreen;
-            if (screen is null) return false;
-            var b = screen.Bounds;
-            return r.Left <= b.Left && r.Top <= b.Top && r.Right >= b.Right && r.Bottom >= b.Bottom;
+            if (hwnd == IntPtr.Zero || IsIconic(hwnd))
+            {
+                return false;
+            }
+
+            // Never treat the desktop / shell / our own window as a game.
+            var className = GetClassName(hwnd);
+            if (className is "Progman" or "WorkerW" or "Shell_TrayWnd")
+            {
+                return false;
+            }
+
+            if (!GetWindowRect(hwnd, out var r))
+            {
+                return false;
+            }
+
+            var monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (monitor == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(monitor, ref info))
+            {
+                return false;
+            }
+
+            var m = info.rcMonitor;
+            // Fullscreen means covering the monitor bounds (allowing a couple of pixels
+            // for window borders / rounded corners) and not merely a maximized window.
+            return r.Left <= m.Left + 2
+                && r.Top <= m.Top + 2
+                && r.Right >= m.Right - 2
+                && r.Bottom >= m.Bottom - 2
+                && (r.Right - r.Left) >= (m.Right - m.Left) - 4
+                && (r.Bottom - r.Top) >= (m.Bottom - m.Top) - 4;
         }
-        catch { return false; }
+        catch
+        {
+            return false;
+        }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetClassName(IntPtr hwnd, StringBuilder lpClassName, int nMaxCount);
+
+    private static string GetClassName(IntPtr hwnd)
+    {
+        try
+        {
+            var builder = new StringBuilder(256);
+            return GetClassName(hwnd, builder, builder.Capacity) > 0 ? builder.ToString() : "";
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);

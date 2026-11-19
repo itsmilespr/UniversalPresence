@@ -51,6 +51,9 @@ public sealed record MediaSnapshot
     /// <summary>Public HTTPS URL of the program's icon (uploaded cover).</summary>
     public string? ProgramIconUrl { get; init; }
 
+    /// <summary>How the cover was chosen: smtc, browser-ignored, browser-real, tiktok, none.</summary>
+    public string ArtworkDecision { get; init; } = "unknown";
+
     /// <summary>Consecutive play count for this track (1 on first play, increments on repeat).</summary>
     public int PlayCount { get; init; } = 1;
 

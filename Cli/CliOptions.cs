@@ -16,10 +16,20 @@ public sealed class CliOptions
     public bool Verbose { get; private set; }
     public bool Paused { get; private set; }
     public bool Settings { get; private set; }
+    public bool Pause { get; private set; }
+    public bool Resume { get; private set; }
+    public bool Toggle { get; private set; }
+    public bool Status { get; private set; }
+    public bool OpenSettings { get; private set; }
+    public bool Version { get; private set; }
+    public bool SelfTest { get; private set; }
+    public bool HistoryStats { get; private set; }
+    public string? HistoryExport { get; private set; }
+    public string? Profile { get; private set; }
     public string? SendCommand { get; private set; }
     public bool ShowHelp { get; private set; }
     public string? ClientId { get; private set; }
-    public string? ConfigPath { get; private set; }
+    public string? ConfigPath { get; internal set; }
     public int Seconds { get; private set; }
 
     public static CliOptions Parse(string[] args)
@@ -65,6 +75,36 @@ public sealed class CliOptions
                     break;
                 case "--seconds":
                     cli.Seconds = int.TryParse(NextValue(args, ref i), out var seconds) ? Math.Clamp(seconds, 1, 86_400) : 0;
+                    break;
+                case "--pause":
+                    cli.Pause = true;
+                    break;
+                case "--resume":
+                    cli.Resume = true;
+                    break;
+                case "--toggle":
+                    cli.Toggle = true;
+                    break;
+                case "--status":
+                    cli.Status = true;
+                    break;
+                case "--open-settings":
+                    cli.OpenSettings = true;
+                    break;
+                case "--version":
+                    cli.Version = true;
+                    break;
+                case "--self-test":
+                    cli.SelfTest = true;
+                    break;
+                case "--history-stats":
+                    cli.HistoryStats = true;
+                    break;
+                case "--history-export":
+                    cli.HistoryExport = NextValue(args, ref i);
+                    break;
+                case "--profile":
+                    cli.Profile = NextValue(args, ref i);
                     break;
                 case "--help":
                 case "-h":

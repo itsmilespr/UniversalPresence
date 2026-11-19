@@ -159,22 +159,22 @@ public sealed class UpdateService : IDisposable
                 return null;
             }
 
-            if (info.Sha256 is { Length: 64 } expected)
+            if (info.Sha256 is not { Length: 64 } expected)
             {
-                var actual = await HashAsync(temp).ConfigureAwait(false);
-                if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-                {
-                    _log.Warn("La descarga no coincide con el SHA-256 de la release; se descarta.");
-                    File.Delete(temp);
-                    return null;
-                }
+                _log.Warn("La release no publica SHA-256; la actualización se descarta por seguridad.");
+                File.Delete(temp);
+                return null;
+            }
 
-                _log.Info("Update SHA-256 verified.");
-            }
-            else
+            var actual = await HashAsync(temp).ConfigureAwait(false);
+            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
-                _log.Warn("Release does not publish SHA-256; only size is checked.");
+                _log.Warn("La descarga no coincide con el SHA-256 de la release; se descarta.");
+                File.Delete(temp);
+                return null;
             }
+
+            _log.Info("Update SHA-256 verified.");
 
             File.Move(temp, target, true);
             _downloadedPath = target;

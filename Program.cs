@@ -64,6 +64,82 @@ internal static class Program
             return 0;
         }
 
+        if (cli.Version)
+        {
+            Console.WriteLine(typeof(Program).Assembly.GetName().Version);
+            return 0;
+        }
+
+        if (cli.SelfTest)
+        {
+            return SelfTestRunner.Run();
+        }
+
+        if (cli.HistoryStats)
+        {
+            var history = new UniversalPresence.Infrastructure.ListeningHistoryService();
+            Console.WriteLine(history.Summary());
+            return 0;
+        }
+
+        if (!string.IsNullOrWhiteSpace(cli.HistoryExport))
+        {
+            var history = new UniversalPresence.Infrastructure.ListeningHistoryService();
+            Console.WriteLine(history.ExportCsv(cli.HistoryExport!));
+            return 0;
+        }
+
+        if (cli.Pause || cli.Resume || cli.Toggle || cli.OpenSettings)
+        {
+            try
+            {
+                var dir = AppOptions.LocalDataDirectory;
+                Directory.CreateDirectory(dir);
+                var command = cli.Pause ? "pause" : cli.Resume ? "resume" : cli.Toggle ? "toggle" : "settings";
+                File.WriteAllText(Path.Combine(dir, "command.txt"), command);
+                Console.WriteLine($"Command sent: {command}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Could not send the command: {ex.Message}");
+                return 1;
+            }
+
+            return 0;
+        }
+
+        if (cli.Status)
+        {
+            var statusPath = Path.Combine(AppOptions.LocalDataDirectory, "status.txt");
+            if (File.Exists(statusPath))
+            {
+                Console.WriteLine(File.ReadAllText(statusPath));
+            }
+            else
+            {
+                Console.WriteLine("Universal Presence is not running.");
+            }
+            return 0;
+        }
+
+        if (!string.IsNullOrWhiteSpace(cli.Profile))
+        {
+            try
+            {
+                var dir = AppOptions.LocalDataDirectory;
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "command.txt"), $"profile:{cli.Profile}");
+                Console.WriteLine($"Profile switch requested: {cli.Profile}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Could not request profile switch: {ex.Message}");
+                return 1;
+            }
+
+            return 0;
+        }
+
         var options = AppOptions.Load(cli);
 
         if (cli.DryRun)
@@ -88,6 +164,7 @@ internal static class Program
         {
             log.Error("Error fatal.", ex);
             Console.Error.WriteLine(ex);
+            try { CrashDiagnostics.Write(ex, log, options); } catch { }
             return 1;
         }
     }

@@ -265,6 +265,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         _statusItem.Text = Shorten(status, 90);
         _notifyIcon.Text = Shorten($"Universal Presence — {status}", 63);
 
+        try
+        {
+            File.WriteAllText(Path.Combine(AppOptions.LocalDataDirectory, "status.txt"), status);
+        }
+        catch { }
+
         var visual = paused
             ? TrayVisualState.Paused
             : _engine.LastSnapshot is { IsActive: true }
@@ -293,6 +299,27 @@ public sealed class TrayApplicationContext : ApplicationContext
                 case "toggle": TogglePause(); break;
                 case "settings": OpenSettings(); break;
                 case "exit": BeginExit(); break;
+                case "reload":
+                    _engine.ApplySettings();
+                    _ui = UiText.For(_options.Language);
+                    ApplyHotkeys();
+                    ApplyOverlay();
+                    UpdateUi();
+                    break;
+                default:
+                    if (cmd.StartsWith("profile:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var profileName = cmd["profile:".Length..].Trim();
+                        if (profileName.Length > 0 && ProfileService.Switch(_options, profileName))
+                        {
+                            _engine.ApplySettings();
+                            _ui = UiText.For(_options.Language);
+                            ApplyHotkeys();
+                            ApplyOverlay();
+                            UpdateUi();
+                        }
+                    }
+                    break;
             }
             UpdateUi();
         }
