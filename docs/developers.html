@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Universal Presence — Build your own</title>
+<meta name="description" content="How to build Universal Presence from source and create your own plugins.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a12">
+<style>
+  :root { --bg:#07070c; --text:#f4f4fa; --muted:#a5a5bd; --brand:#7c6cff; --brand-soft:#b3a4ff; --line:rgba(255,255,255,.09); --panel:rgba(255,255,255,.04); --max:980px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI Variable Display","Segoe UI",ui-sans-serif,system-ui,sans-serif; line-height:1.65; }
+  .wrap { max-width:var(--max); margin:0 auto; padding:0 24px; }
+  header { border-bottom:1px solid var(--line); padding:20px 0; }
+  .nav { display:flex; align-items:center; gap:18px; }
+  .brand { color:var(--text); text-decoration:none; font-weight:650; }
+  .nav a { color:var(--muted); text-decoration:none; }
+  .nav a:hover { color:var(--text); }
+  h1 { font-size:clamp(2rem,4vw,3rem); letter-spacing:-.03em; margin:40px 0 12px; }
+  h2 { margin:34px 0 10px; font-size:1.45rem; letter-spacing:-.02em; }
+  h3 { margin:22px 0 6px; font-size:1.05rem; }
+  p,li { color:var(--muted); }
+  code, pre { font-family:"Cascadia Code",ui-monospace,Consolas,monospace; }
+  code { font-size:.88em; background:rgba(255,255,255,.07); border:1px solid var(--line); padding:1px 6px; border-radius:6px; }
+  pre { background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:14px; padding:18px; overflow:auto; color:#e7e7f5; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:22px; margin:18px 0; }
+  a.btn { display:inline-block; margin:8px 0; padding:10px 16px; border-radius:12px; background:linear-gradient(135deg,#8b7bff,#6250ff 55%,#4f8cff); color:#fff; text-decoration:none; font-weight:600; }
+  footer { border-top:1px solid var(--line); margin-top:48px; padding:24px 0 40px; color:#7f7f97; font-size:.86rem; }
+</style>
+</head>
+<body>
+<header><div class="wrap nav"><a class="brand" href="index.html">Universal Presence</a><a href="index.html">Home</a><a href="#build">Build</a><a href="#plugins">Plugins</a><a href="#contribute">Contribute</a></div></header>
+<main class="wrap">
+  <h1>Build your own</h1>
+  <p>Universal Presence is a .NET 8 WinForms app with no NuGet dependencies. You can fork it, change the presence layout, add players, or write a plugin without touching the core.</p>
+
+  <h2 id="build">1. Build from source</h2>
+  <div class="card">
+    <pre>git clone https://github.com/itsmilespr/UniversalPresence.git
+cd UniversalPresence
+./.dotnet/dotnet build -c Debug
+./.dotnet/dotnet publish UniversalPresence.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:PublishDir=publish/</pre>
+    <p>Requirements: .NET 8 SDK and Windows 10/11 x64. The project uses Windows SMTC and Discord IPC, so it cannot run on macOS or Linux.</p>
+  </div>
+
+  <h2 id="plugins">2. Create a plugin</h2>
+  <p>Plugins are .NET assemblies loaded from <code>%LOCALAPPDATA%\UniversalPresence\plugins</code>. Enable <strong>PluginsEnabled</strong> in <code>config.json</code>, then drop your DLL there.</p>
+  <div class="card">
+    <pre>using UniversalPresence.Media;
+using UniversalPresence.Plugins;
+
+public sealed class MyPlugin : IUniversalPresencePlugin
+{
+    public string Name => "My plugin";
+
+    public void Initialize(PluginContext context)
+    {
+        context.Log("Plugin started");
+    }
+
+    public void OnTrackChanged(MediaSnapshot? snapshot)
+    {
+        if (snapshot is { IsActive: true })
+        {
+            // snapshot.Title, Artist, Album, PlayerName, AppUserModelId...
+        }
+    }
+}</pre>
+    <p>Target framework: <code>net8.0-windows</code>. Reference the main project or copy the <code>Plugins</code> and <code>Media</code> namespaces. Plugins receive track changes after the app builds the activity; keep them fast and never block the UI thread.</p>
+  </div>
+
+  <h3>MediaSnapshot fields</h3>
+  <div class="card">
+    <p><code>AppUserModelId</code>, <code>PlayerName</code>, <code>PlayerExecutable</code>, <code>Title</code>, <code>Artist</code>, <code>Album</code>, <code>AlbumArtist</code>, <code>Status</code>, <code>Position</code>, <code>Duration</code>, <code>Artwork</code>, <code>PublicArtworkUrl</code>, <code>ProgramIconUrl</code>, <code>PlayCount</code>, <code>IsActive</code>.</p>
+  </div>
+
+  <h2>3. Change the presence layout</h2>
+  <div class="card">
+    <p>Use <code>DetailsTemplate</code>, <code>StateTemplate</code> and <code>LargeTextTemplate</code> in settings. Placeholders: <code>{title}</code>, <code>{artist}</code>, <code>{album}</code>, <code>{player}</code>, <code>{status}</code>. For deeper changes, edit <code>Core/ActivityFactory.cs</code>.</p>
+  </div>
+
+  <h2>4. Profiles</h2>
+  <div class="card">
+    <p>Profiles are stored in <code>%APPDATA%\UniversalPresence\profiles\{name}.json</code>. The <code>default</code> profile is <code>config.json</code>. Use the settings window or <code>--profile name</code> from the CLI.</p>
+  </div>
+
+  <h2>5. Self-test</h2>
+  <div class="card">
+    <pre>UniversalPresence.exe --self-test</pre>
+    <p>Runs in-process checks for localization, config roundtrip, secret protection and activity generation. Use it before sending a pull request.</p>
+  </div>
+
+  <h2 id="contribute">6. Contribute</h2>
+  <div class="card">
+    <p>Open an issue or pull request on GitHub. Keep the app free of player whitelists: every SMTC session must remain detectable. Run <code>--self-test</code> and <code>--test --dry-run</code> before submitting.</p>
+    <a class="btn" href="https://github.com/itsmilespr/UniversalPresence">Open repository</a>
+  </div>
+</main>
+<footer><div class="wrap">Universal Presence · MIT License · <a href="index.html" style="color:#a9a9c2">Home</a></div></footer>
+</body>
+</html>
