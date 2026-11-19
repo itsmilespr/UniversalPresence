@@ -13,3 +13,4 @@ publish_test/
 .cloud-attachments/
 *.log
 .env
+.secrets/
