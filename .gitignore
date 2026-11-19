@@ -15,3 +15,6 @@ publish_test/
 .env
 .secrets/
 .tmpdebug/
+android/local.properties
+android/.gradle/
+android/app/build/
