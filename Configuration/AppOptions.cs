@@ -218,6 +218,24 @@ public sealed class AppOptions
     /// <summary>Rollback automático si la app no arranca correctamente.</summary>
     public bool AutoRollback { get; set; } = true;
 
+    /// <summary>
+    /// Texto/URL del primer botón de la presencia (vacío = botón por defecto "Descargar").
+    /// </summary>
+    public string Button1Label { get; set; } = "";
+    public string Button1Url { get; set; } = "";
+
+    /// <summary>
+    /// Texto/URL del segundo botón de la presencia (vacío = botón por defecto "Cómo funciona").
+    /// </summary>
+    public string Button2Label { get; set; } = "";
+    public string Button2Url { get; set; } = "";
+
+    /// <summary>Días máximos de historial de escucha (0 = sin límite).</summary>
+    public int ListeningHistoryRetentionDays { get; set; } = 90;
+
+    /// <summary>Entradas máximas de historial de escucha (0 = sin límite).</summary>
+    public int ListeningHistoryMaxEntries { get; set; } = 5000;
+
     /// <summary>Load third-party plugins from %LOCALAPPDATA%\UniversalPresence\plugins.</summary>
     public bool PluginsEnabled { get; set; }
 
@@ -675,6 +693,12 @@ public sealed class ArtworkOptions
 
     /// <summary>Where thumbnails are cached. Defaults to %LOCALAPPDATA%\UniversalPresence\artwork.</summary>
     public string? CacheDirectory { get; set; }
+
+    /// <summary>
+    /// No sube ni busca portadas: usa solo el icono de la app/reproductor. Ahorra escrituras
+    /// y tiempo, útil si no te importa la portada o el host está saturado.
+    /// </summary>
+    public bool IconOnly { get; set; }
 
     [JsonIgnore]
     public string ResolvedCacheDirectory => string.IsNullOrWhiteSpace(CacheDirectory)

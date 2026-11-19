@@ -73,6 +73,55 @@ public static class SelfTestRunner
             failures.Add("Activity factory: " + ex.Message);
         }
 
+        // Button customization.
+        try
+        {
+            var options = new AppOptions { Language = "en", Button1Label = "Play", Button1Url = "https://example.com/play", Button2Label = "", Button2Url = "" };
+            var factory = new ActivityFactory(options);
+            var snapshot = new MediaSnapshot
+            {
+                AppUserModelId = "test",
+                PlayerName = "TestPlayer",
+                Title = "Song",
+                Artist = "Artist",
+                Status = PlaybackState.Playing,
+                CapturedAt = DateTimeOffset.UtcNow,
+            };
+            var activity = factory.Create(snapshot);
+            Check("Button customization count", activity?.Buttons?.Count == 2);
+            Check("Button customization label", activity?.Buttons?[0].Label == "Play");
+            Check("Button customization url", activity?.Buttons?[0].Url == "https://example.com/play");
+        }
+        catch (Exception ex)
+        {
+            failures.Add("Button customization: " + ex.Message);
+        }
+
+        // Icon-only mode.
+        try
+        {
+            var options = new AppOptions { Language = "en" };
+            options.Artwork.IconOnly = true;
+            var factory = new ActivityFactory(options);
+            var snapshot = new MediaSnapshot
+            {
+                AppUserModelId = "test",
+                PlayerName = "TestPlayer",
+                Title = "Song",
+                Artist = "Artist",
+                Status = PlaybackState.Playing,
+                CapturedAt = DateTimeOffset.UtcNow,
+                Artwork = new ArtworkInfo("/tmp/x.jpg", "x.jpg", "image/jpeg", "hash", 100),
+            };
+            var activity = factory.Create(snapshot);
+            Check("Icon-only activity created", activity is not null);
+            Check("Icon-only clears large image", activity is null || string.IsNullOrWhiteSpace(activity.Assets?.LargeImage));
+        }
+        catch (Exception ex)
+        {
+            failures.Add("Icon-only: " + ex.Message);
+        }
+
         // Templates.
         try
         {

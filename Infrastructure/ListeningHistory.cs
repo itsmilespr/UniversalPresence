@@ -11,10 +11,14 @@ public sealed class ListeningHistoryService
 {
     private readonly string _path;
     private readonly object _gate = new();
+    private readonly int _retentionDays;
+    private readonly int _maxEntries;
 
-    public ListeningHistoryService()
+    public ListeningHistoryService(int retentionDays = 90, int maxEntries = 5000)
     {
         _path = System.IO.Path.Combine(AppOptions.LocalDataDirectory, "history.jsonl");
+        _retentionDays = retentionDays < 0 ? 0 : retentionDays;
+        _maxEntries = maxEntries < 0 ? 0 : maxEntries;
         try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!); } catch { }
     }
 
@@ -32,12 +36,58 @@ public sealed class ListeningHistoryService
             });
             lock (_gate)
             {
+                TrimIfNeeded(at);
                 File.AppendAllText(_path, line + Environment.NewLine);
             }
         }
         catch
         {
             // Historial nunca debe tumbar la app.
+        }
+    }
+
+    private void TrimIfNeeded(DateTimeOffset now)
+    {
+        if (!File.Exists(_path)) return;
+        if (_retentionDays == 0 && _maxEntries == 0) return;
+
+        try
+        {
+            var cutoff = _retentionDays > 0 ? now.AddDays(-_retentionDays) : DateTimeOffset.MinValue;
+            var lines = File.ReadAllLines(_path).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+            var kept = new List<string>(lines.Count);
+            foreach (var line in lines)
+            {
+                DateTimeOffset at = DateTimeOffset.MinValue;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    if (doc.RootElement.TryGetProperty("at", out var el) && el.ValueKind == JsonValueKind.String)
+                    {
+                        DateTimeOffset.TryParse(el.GetString(), out at);
+                    }
+                }
+                catch { }
+
+                if (at == DateTimeOffset.MinValue || at >= cutoff)
+                {
+                    kept.Add(line);
+                }
+            }
+
+            if (_maxEntries > 0 && kept.Count > _maxEntries)
+            {
+                kept = kept.Skip(kept.Count - _maxEntries).ToList();
+            }
+
+            if (kept.Count != lines.Count)
+            {
+                File.WriteAllLines(_path, kept);
+            }
+        }
+        catch
+        {
+            // best effort
         }
     }
 

@@ -35,7 +35,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private readonly DiscordPresenceService _discord;
     private readonly ActivityFactory _factory;
     private readonly ArtworkLookupService _artworkLookup;
-    private readonly ListeningHistoryService _history = new();
+    private readonly ListeningHistoryService _history;
     private readonly LastFmService _lastfm;
     private string _prevScrobbleTitle = "";
     private string _prevScrobbleArtist = "";
@@ -105,6 +105,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         _externalAssets = new ExternalAssetsService(options, _discordTokens, log);
         _programIcons = new ProgramIconAssetService(options, _artworkUpload, log);
         _plugins = new PluginHost(options, log);
+        _history = new ListeningHistoryService(options.ListeningHistoryRetentionDays, options.ListeningHistoryMaxEntries);
     }
 
     /// <summary>Raised when the tray needs to repaint; fires on a worker thread.</summary>

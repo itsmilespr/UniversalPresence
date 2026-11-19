@@ -58,7 +58,7 @@ public sealed class ActivityFactory
         var album = _options.ShowAlbum ? snapshot.Album : "";
         var player = snapshot.PlayerName;
 
-        var largeImage = ResolveLargeImage(snapshot);
+        var largeImage = _options.Artwork.IconOnly ? "" : ResolveLargeImage(snapshot);
         if (_options.HideIfNoArtwork && string.IsNullOrWhiteSpace(largeImage))
         {
             return null;
@@ -131,11 +131,7 @@ public sealed class ActivityFactory
             Details = Clip(detailsValue),
             State = ClipNullable(stateValue),
             Timestamps = BuildTimestamps(snapshot, status),
-            Buttons = new List<DiscordButton>
-            {
-                new() { Label = text.Download, Url = DownloadUrl },
-                new() { Label = text.HowItWorks, Url = HowItWorksUrl },
-            },
+            Buttons = BuildButtons(text),
             Assets = new DiscordAssets
             {
                 LargeImage = largeImage,
@@ -145,6 +141,30 @@ public sealed class ActivityFactory
             },
         };
     }
+
+    private List<DiscordButton> BuildButtons(PresenceText text)
+    {
+        var buttons = new List<DiscordButton>();
+
+        var label1 = string.IsNullOrWhiteSpace(_options.Button1Label) ? text.Download : _options.Button1Label.Trim();
+        var url1 = string.IsNullOrWhiteSpace(_options.Button1Url) ? DownloadUrl : _options.Button1Url.Trim();
+        if (!string.IsNullOrWhiteSpace(label1) && Uri.TryCreate(url1, UriKind.Absolute, out _))
+        {
+            buttons.Add(new DiscordButton { Label = ClipLabel(label1), Url = url1 });
+        }
+
+        var label2 = string.IsNullOrWhiteSpace(_options.Button2Label) ? text.HowItWorks : _options.Button2Label.Trim();
+        var url2 = string.IsNullOrWhiteSpace(_options.Button2Url) ? HowItWorksUrl : _options.Button2Url.Trim();
+        if (!string.IsNullOrWhiteSpace(label2) && Uri.TryCreate(url2, UriKind.Absolute, out _))
+        {
+            buttons.Add(new DiscordButton { Label = ClipLabel(label2), Url = url2 });
+        }
+
+        return buttons;
+    }
+
+    private static string ClipLabel(string value) =>
+        value.Length <= 32 ? value : value[..32];
 
     /// <summary>
     /// Discord renders its own clock from an absolute start/end pair; there is no

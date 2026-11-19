@@ -52,6 +52,20 @@ public sealed class SettingsForm : Form
     private TextBox _stateTemplateBox = null!;
     private TextBox _largeTextTemplateBox = null!;
 
+    // --- Artwork tab ---
+    private CheckBox _artworkEnabledCheck = null!;
+    private ComboBox _artworkModeBox = null!;
+    private ComboBox _uploadModeBox = null!;
+    private TextBox _uploadUrlBox = null!;
+    private TextBox _uploadApiKeyBox = null!;
+    private CheckBox _iconOnlyCheck = null!;
+    private TextBox _button1LabelBox = null!;
+    private TextBox _button1UrlBox = null!;
+    private TextBox _button2LabelBox = null!;
+    private TextBox _button2UrlBox = null!;
+    private NumericUpDown _historyDaysBox = null!;
+    private NumericUpDown _historyEntriesBox = null!;
+
     // --- Last.fm tab ------------------------------------------------------------
     private TextBox _lastFmApiKeyBox = null!;
     private TextBox _lastFmSecretBox = null!;
@@ -97,6 +111,7 @@ public sealed class SettingsForm : Form
         _tabs.TabPages.Add(MakeTab(_ui.BehaviorTab, BuildBehaviorTab()));
         _tabs.TabPages.Add(MakeTab(_ui.PausedTab, BuildPausedTab()));
         _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
+        _tabs.TabPages.Add(MakeTab("Portadas", BuildArtworkTab()));
         _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
 
         // ---- Bottom buttons ----------------------------------------------------
@@ -486,6 +501,62 @@ public sealed class SettingsForm : Form
         return panel;
     }
 
+    private Control BuildArtworkTab()
+    {
+        _artworkEnabledCheck = MakeCheck("Leer y publicar carátulas (SMTC)", _options.Artwork.Enabled, "ArtworkEnabledCheck");
+        _iconOnlyCheck = MakeCheck("Solo icono (no subir/buscar portadas)", _options.Artwork.IconOnly, "IconOnlyCheck");
+
+        var modeLabel = new Label { Text = "Modo de portada:", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
+        _artworkModeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220, Name = "ArtworkModeBox" };
+        foreach (var m in new[] { "Auto", "ExternalUrl", "Lookup", "DiscordAsset", "None" }) _artworkModeBox.Items.Add(m);
+        _artworkModeBox.SelectedItem = _options.Artwork.Mode;
+        if (_artworkModeBox.SelectedIndex < 0) _artworkModeBox.SelectedIndex = 0;
+
+        var uploadLabel = new Label { Text = "Modo de subida:", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
+        _uploadModeBox = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220, Name = "UploadModeBox" };
+        foreach (var m in new[] { "None", "Catbox", "Imgur", "SelfHosted" }) _uploadModeBox.Items.Add(m);
+        _uploadModeBox.SelectedItem = _options.Artwork.UploadMode;
+        if (_uploadModeBox.SelectedIndex < 0) _uploadModeBox.SelectedIndex = 0;
+
+        _uploadUrlBox = new TextBox { Text = _options.Artwork.UploadUrl, Dock = DockStyle.Top, Name = "UploadUrlBox", PlaceholderText = "https://tu-host/covers" };
+        _uploadApiKeyBox = new TextBox { Text = _options.Artwork.UploadApiKey, Dock = DockStyle.Top, Name = "UploadApiKeyBox", PlaceholderText = "token / Client-ID" };
+
+        _button1LabelBox = new TextBox { Text = _options.Button1Label, Dock = DockStyle.Top, Name = "Button1LabelBox", PlaceholderText = "Etiqueta botón 1 (vacío = Descargar)" };
+        _button1UrlBox = new TextBox { Text = _options.Button1Url, Dock = DockStyle.Top, Name = "Button1UrlBox", PlaceholderText = "URL botón 1" };
+        _button2LabelBox = new TextBox { Text = _options.Button2Label, Dock = DockStyle.Top, Name = "Button2LabelBox", PlaceholderText = "Etiqueta botón 2 (vacío = Cómo funciona)" };
+        _button2UrlBox = new TextBox { Text = _options.Button2Url, Dock = DockStyle.Top, Name = "Button2UrlBox", PlaceholderText = "URL botón 2" };
+
+        var daysLabel = new Label { Text = "Retención historial (días, 0 = sin límite):", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
+        _historyDaysBox = new NumericUpDown { Minimum = 0, Maximum = 3650, Value = Math.Clamp(_options.ListeningHistoryRetentionDays, 0, 3650), Width = 80, Name = "HistoryDaysBox" };
+        var entriesLabel = new Label { Text = "Entradas máximas (0 = sin límite):", AutoSize = true, Margin = new Padding(0, 8, 10, 4) };
+        _historyEntriesBox = new NumericUpDown { Minimum = 0, Maximum = 100000, Value = Math.Clamp(_options.ListeningHistoryMaxEntries, 0, 100000), Width = 90, Name = "HistoryEntriesBox" };
+
+        var panel = new FlowLayoutPanel { Dock = DockStyle.Top, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, BackColor = CardBg };
+        panel.Controls.Add(_artworkEnabledCheck);
+        panel.Controls.Add(_iconOnlyCheck);
+        panel.Controls.Add(modeLabel);
+        panel.Controls.Add(_artworkModeBox);
+        panel.Controls.Add(uploadLabel);
+        panel.Controls.Add(_uploadModeBox);
+        panel.Controls.Add(new Label { Text = "URL del host propio:", AutoSize = true, Margin = new Padding(0, 8, 0, 2) });
+        panel.Controls.Add(_uploadUrlBox);
+        panel.Controls.Add(new Label { Text = "Token / Client-ID:", AutoSize = true, Margin = new Padding(0, 6, 0, 2) });
+        panel.Controls.Add(_uploadApiKeyBox);
+        panel.Controls.Add(new Label { Text = "Botón 1:", AutoSize = true, Margin = new Padding(0, 10, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
+        panel.Controls.Add(_button1LabelBox);
+        panel.Controls.Add(_button1UrlBox);
+        panel.Controls.Add(new Label { Text = "Botón 2:", AutoSize = true, Margin = new Padding(0, 8, 0, 2), Font = new Font("Segoe UI", 9f, FontStyle.Bold, GraphicsUnit.Point) });
+        panel.Controls.Add(_button2LabelBox);
+        panel.Controls.Add(_button2UrlBox);
+        var row = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
+        row.Controls.Add(daysLabel);
+        row.Controls.Add(_historyDaysBox);
+        row.Controls.Add(entriesLabel);
+        row.Controls.Add(_historyEntriesBox);
+        panel.Controls.Add(row);
+        return panel;
+    }
+
     private Control BuildLastFmTab()
     {
         _lastFmApiKeyBox = new TextBox { Text = _options.LastFmApiKey, Dock = DockStyle.Top, Name = "LastFmApiKeyBox", PlaceholderText = "API key", Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point) };
@@ -744,6 +815,7 @@ public sealed class SettingsForm : Form
         _tabs.TabPages.Add(MakeTab(_ui.BehaviorTab, BuildBehaviorTab()));
         _tabs.TabPages.Add(MakeTab(_ui.PausedTab, BuildPausedTab()));
         _tabs.TabPages.Add(MakeTab(_ui.PresenceTab, BuildPresenceTab()));
+        _tabs.TabPages.Add(MakeTab("Portadas", BuildArtworkTab()));
         _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
         if (index >= 0 && index < _tabs.TabPages.Count) _tabs.SelectedIndex = index;
     }
@@ -771,6 +843,18 @@ public sealed class SettingsForm : Form
         _options.ShowTrackChangeToast = _showTrackChangeToast.Checked;
         _options.GlobalHotkeys = _globalHotkeys.Checked;
         _options.ListeningHistory = _listeningHistory.Checked;
+        _options.Artwork.Enabled = _artworkEnabledCheck.Checked;
+        _options.Artwork.IconOnly = _iconOnlyCheck.Checked;
+        _options.Artwork.Mode = _artworkModeBox.SelectedItem?.ToString() ?? _options.Artwork.Mode;
+        _options.Artwork.UploadMode = _uploadModeBox.SelectedItem?.ToString() ?? _options.Artwork.UploadMode;
+        _options.Artwork.UploadUrl = _uploadUrlBox.Text.Trim();
+        _options.Artwork.UploadApiKey = _uploadApiKeyBox.Text.Trim();
+        _options.Button1Label = _button1LabelBox.Text.Trim();
+        _options.Button1Url = _button1UrlBox.Text.Trim();
+        _options.Button2Label = _button2LabelBox.Text.Trim();
+        _options.Button2Url = _button2UrlBox.Text.Trim();
+        _options.ListeningHistoryRetentionDays = (int)_historyDaysBox.Value;
+        _options.ListeningHistoryMaxEntries = (int)_historyEntriesBox.Value;
         _options.DetailsTemplate = _detailsTemplateBox.Text.Trim();
         _options.StateTemplate = _stateTemplateBox.Text.Trim();
         _options.LargeTextTemplate = _largeTextTemplateBox.Text.Trim();
