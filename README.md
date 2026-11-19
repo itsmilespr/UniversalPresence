@@ -107,7 +107,7 @@ publishes the release with the `.exe` attached.
 
 Universal Presence has no servers and no accounts. It only writes on your machine and talks to
 Discord over its local channel. So Discord can display the extracted cover, it is uploaded to
-Litterbox (catbox.moe); this can be disabled with `"Artwork": { "UploadMode": "None" }`. To find
+Litterbox (catbox.moe), Imgur or a self-hosted permanent cover host (`"UploadMode": "SelfHosted"`); this can be disabled with `"Artwork": { "UploadMode": "None" }`. To find
 a cover when the player does not provide one, title/artist/album are sent to the public iTunes
 and Deezer APIs; this can be disabled with `"Artwork": { "Mode": "None" }`. To update itself, it
 queries the public GitHub API on startup and every 6 h (no account or token); this can be

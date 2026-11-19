@@ -140,6 +140,7 @@ public sealed class ArtworkUploadService
             {
                 "imgur" => await UploadToImgurAsync(artwork, cancellationToken).ConfigureAwait(false),
                 "catbox" => await UploadToCatboxAsync(artwork, cancellationToken).ConfigureAwait(false),
+                "selfhosted" => await UploadToSelfHostedAsync(artwork, cancellationToken).ConfigureAwait(false),
                 _ => null,
             };
 
@@ -329,6 +330,57 @@ public sealed class ArtworkUploadService
 
         _log.Info($"Carátula subida a Litterbox: {body}");
         return body;
+    }
+
+    private async Task<string?> UploadToSelfHostedAsync(ArtworkInfo artwork, CancellationToken cancellationToken)
+    {
+        var baseUrl = string.IsNullOrWhiteSpace(_options.Artwork.UploadUrl)
+            ? "https://universal-presence-covers-s0q6cn.freebuff.site"
+            : _options.Artwork.UploadUrl.Trim().TrimEnd('/');
+
+        var token = _options.Artwork.UploadApiKey.Trim();
+        if (token.Length == 0)
+        {
+            _log.Warn(
+                "Artwork.UploadMode es «SelfHosted» pero Artwork.UploadApiKey está vacío " +
+                "(token de subida del host propio). Se usa la búsqueda de portada como respaldo.");
+            return null;
+        }
+
+        var bytes = await ReadArtworkAsync(artwork, cancellationToken).ConfigureAwait(false);
+
+        using var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(bytes);
+        file.Headers.ContentType = new MediaTypeHeaderValue(artwork.ContentType);
+        form.Add(file, "file", artwork.FileName);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/upload")
+        {
+            Content = form,
+        };
+        request.Headers.Add("X-Upload-Token", token);
+
+        using var response = await Http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _log.Warn($"El host propio respondió {(int)response.StatusCode} al subir la carátula.");
+            return null;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (document.RootElement.TryGetProperty("url", out var urlElement)
+            && urlElement.GetString() is { Length: > 0 } url
+            && IsPublicHttps(url))
+        {
+            _log.Info($"Carátula subida al host propio: {url}");
+            return url;
+        }
+
+        _log.Warn("El host propio no devolvió un enlace utilizable.");
+        return null;
     }
 
     private static async Task<byte[]> ReadArtworkAsync(ArtworkInfo artwork, CancellationToken cancellationToken)

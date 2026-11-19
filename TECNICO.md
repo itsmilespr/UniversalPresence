@@ -152,8 +152,9 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `ShowPausedIcon` | `false` | Al pausar, usa `PauseAssetKey` como icono pequeño. |
 | `PauseAssetKey` / `AppIconAssetKey` / `PlayerAssetKey` | `""` | Assets subidos en el portal de Discord. |
 | `Artwork.Mode` | `"Auto"` | `Auto`, `ExternalUrl`, `Lookup`, `DiscordAsset` o `None`. |
-| `Artwork.UploadMode` | `"Catbox"` | `Catbox` (Litterbox, sin clave), `Imgur` o `None`. |
-| `Artwork.UploadApiKey` | `""` | Client-ID de Imgur. |
+| `Artwork.UploadMode` | `"Catbox"` | `Catbox` (Litterbox, sin clave), `Imgur`, `SelfHosted` (host propio permanente) o `None`. |
+| `Artwork.UploadApiKey` | `""` | Client-ID de Imgur o token del host propio. |
+| `Artwork.UploadUrl` | `""` | URL base del host propio de carátulas (SelfHosted). |
 | `Artwork.ExternalUrlBase` | `""` | Base HTTPS propia para servir las carátulas. |
 | `Artwork.FallbackAssetKey` | `""` | Asset de respaldo sin portada. |
 | `IgnoredPlayers` | navegadores | Lista **negra** por subcadena sobre AUMID, proceso y nombre. |

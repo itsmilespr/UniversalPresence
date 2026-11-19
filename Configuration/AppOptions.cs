@@ -667,6 +667,12 @@ public sealed class ArtworkOptions
     /// <summary>Imgur Client-ID used for anonymous uploads. Ignored by Catbox.</summary>
     public string UploadApiKey { get; set; } = "";
 
+    /// <summary>
+    /// Base URL of our own cover host, e.g. https://universal-presence-covers.example.com.
+    /// Used when UploadMode is SelfHosted. Empty uses the built-in default host.
+    /// </summary>
+    public string UploadUrl { get; set; } = "";
+
     /// <summary>Where thumbnails are cached. Defaults to %LOCALAPPDATA%\UniversalPresence\artwork.</summary>
     public string? CacheDirectory { get; set; }
 
@@ -724,11 +730,12 @@ public sealed class ArtworkOptions
         // o para usar solo la búsqueda de portada). Solo se corrige un valor desconocido.
         UploadMode = string.IsNullOrWhiteSpace(UploadMode) ? "Catbox" : UploadMode.Trim();
 
-        if (!new[] { "None", "Imgur", "Catbox" }.Any(x => string.Equals(x, UploadMode, StringComparison.OrdinalIgnoreCase)))
+        if (!new[] { "None", "Imgur", "Catbox", "SelfHosted" }.Any(x => string.Equals(x, UploadMode, StringComparison.OrdinalIgnoreCase)))
         {
             UploadMode = "Catbox";
         }
 
         UploadApiKey = UploadApiKey?.Trim() ?? "";
+        UploadUrl = UploadUrl?.Trim().TrimEnd('/') ?? "";
     }
 }

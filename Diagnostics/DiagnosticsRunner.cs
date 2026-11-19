@@ -216,13 +216,17 @@ public static class DiagnosticsRunner
 
         if (options.Artwork.UsesUpload)
         {
-            var host = string.Equals(options.Artwork.UploadMode, "Imgur", StringComparison.OrdinalIgnoreCase)
-                ? "Imgur"
-                : "Catbox";
+            var mode = options.Artwork.UploadMode.Trim().ToLowerInvariant();
+            var host = mode switch
+            {
+                "imgur" => "Imgur",
+                "selfhosted" => "host propio",
+                _ => "Catbox",
+            };
 
-            var key = string.Equals(host, "Imgur", StringComparison.OrdinalIgnoreCase)
+            var key = (mode == "imgur" || mode == "selfhosted")
                 && options.Artwork.UploadApiKey.Length == 0
-                    ? " (sin UploadApiKey)"
+                    ? " (sin token)"
                     : "";
 
             return $"subida de la carátula SMTC a {host}{key}";
