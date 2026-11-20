@@ -29,6 +29,13 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// <summary>Tiempo máximo para confirmar que una canción volvió de verdad al principio.</summary>
     private static readonly TimeSpan RepeatConfirmationWindow = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Margen que se espera a que Discord confirme una pista nueva antes de forzar un
+    /// reenvío. Cubre el caso de un envío que se perdió (o se descartó) sin que el bucle
+    /// se enterara: la canción que suena vuelve a publicarse sola.
+    /// </summary>
+    private static readonly TimeSpan AutoResyncGrace = TimeSpan.FromSeconds(2);
+
     private readonly AppOptions _options;
     private readonly Log _log;
     private readonly SmtcMonitor _monitor;
@@ -70,6 +77,18 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private TimeSpan _publishedPosition;
     private DateTimeOffset _publishedAnchorAt = DateTimeOffset.MinValue;
     private bool _hasPublishAnchor;
+
+    // Clave de la última actividad CONFIRMADA por Discord (no la encolada). Es la base de
+    // la resincronización automática: si la canción que suena no coincide con esta clave y
+    // no hay nada pendiente en la cola, el envío se perdió y hay que forzarlo.
+    private volatile string? _publishedKey;
+    private volatile string? _publishedTrackKey;
+    private string? _unconfirmedKey;
+    private DateTimeOffset _unconfirmedSince = DateTimeOffset.MinValue;
+
+    // Última pista registrada en el historial / Last.fm: pausar o reanudar la misma
+    // canción no debe contarla como otra reproducción.
+    private string? _lastLoggedKey;
 
     // Portadas propias subidas en esta ejecución (clave = ruta del archivo).
     private readonly Dictionary<string, string> _overrideUrls = new(StringComparer.OrdinalIgnoreCase);
@@ -287,6 +306,16 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
     private static string ArtworkKey(MediaSnapshot snapshot) =>
         $"{snapshot.Title}|{snapshot.Artist}|{snapshot.Album}";
+
+    /// <summary>Identidad estable de una pista (sin el estado de reproducción).</summary>
+    private static string TrackKey(MediaSnapshot snapshot) =>
+        string.Join(
+            '|',
+            snapshot.AppUserModelId,
+            snapshot.Title,
+            snapshot.Artist,
+            snapshot.Album,
+            ((long)snapshot.Duration.TotalSeconds).ToString(CultureInfo.InvariantCulture));
 
     public void RequestResync()
     {
@@ -591,9 +620,29 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         ? IdleKey
                         : $"{snapshot!.ActivityKey}|{activity.Details}|{activity.State}";
 
+                    // Resincronización automática: si esta pista no es la que Discord tiene
+                    // confirmada, no hay nada en la cola y aun así no se ha publicado en
+                    // AutoResyncGrace, el envío se perdió. Se fuerza el reenvío en lugar de
+                    // esperar al latido (hasta 60 s mostrando la canción anterior).
+                    if (ShouldAutoResync(snapshot, key))
+                    {
+                        forceRepublish = true;
+                        _desiredKey = null;
+                        _log.Info(
+                            $"«{snapshot!.Title}» aún no está confirmada en Discord; " +
+                            "resincronización automática.");
+                    }
+
                     // Historial de escucha: se registra cuando aparece una pista nueva.
-                    if (_options.ListeningHistory && snapshot is { IsActive: true }
-                        && !string.Equals(key, _desiredKey, StringComparison.Ordinal)
+                    // Se compara por identidad de pista (sin el estado): pausar o reanudar
+                    // la misma canción no cuenta como otra reproducción ni la vuelve a
+                    // scrobblear en Last.fm.
+                    var historyKey = snapshot is null
+                        ? ""
+                        : $"{TrackKey(snapshot)}|{snapshot.PlayCount}";
+
+                    if (_options.ListeningHistory && snapshot is { Status: PlaybackState.Playing }
+                        && !string.Equals(historyKey, _lastLoggedKey, StringComparison.Ordinal)
                         && activity is not null)
                     {
                         try
@@ -626,6 +675,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         _prevScrobbleArtist = snapshot.Artist;
                         _prevScrobbleAlbum = snapshot.Album;
                         _prevScrobbleAt = DateTimeOffset.UtcNow;
+                        _lastLoggedKey = historyKey;
                     }
 
                     var publishedAge = _publishedAtUnixMs == 0
@@ -684,7 +734,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             key,
                             urgent,
                             snapshot?.Position ?? TimeSpan.Zero,
-                            snapshot?.CapturedAt ?? DateTimeOffset.UtcNow);
+                            snapshot?.CapturedAt ?? DateTimeOffset.UtcNow,
+                            snapshot is null ? "" : TrackKey(snapshot));
                     }
 
                     SetStatus(Describe(snapshot));
@@ -1025,7 +1076,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             || !_hasPublishAnchor
             || _publishedAtUnixMs == 0
             || snapshot is not { Status: PlaybackState.Playing }
-            || snapshot.Duration <= TimeSpan.Zero)
+            || snapshot.Duration <= TimeSpan.Zero
+            || !string.Equals(_publishedTrackKey, TrackKey(snapshot), StringComparison.Ordinal))
         {
             return false;
         }
@@ -1380,11 +1432,63 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
     private void OnDiscordStateChanged()
     {
-        // Force a republish after a reconnect.
+        // Force a republish after a reconnect: lo que Discord muestra ya no es de fiar.
         _desiredKey = null;
+        _publishedKey = null;
+        _publishedTrackKey = null;
         _publishedAtUnixMs = 0;
+        _hasPublishAnchor = false;
+        _unconfirmedKey = null;
         _signal.Set();
         Updated?.Invoke();
+    }
+
+    /// <summary>
+    /// True cuando la pista que suena no es la confirmada por Discord y la cola está
+    /// vacía: el envío se perdió y hay que forzarlo (resync automático).
+    /// </summary>
+    private bool ShouldAutoResync(MediaSnapshot? snapshot, string key)
+    {
+        if (snapshot is not { IsActive: true })
+        {
+            _unconfirmedKey = null;
+            return false;
+        }
+
+        if (string.Equals(key, _publishedKey, StringComparison.Ordinal))
+        {
+            _unconfirmedKey = null;
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        if (!string.Equals(key, _unconfirmedKey, StringComparison.Ordinal))
+        {
+            _unconfirmedKey = key;
+            _unconfirmedSince = now;
+            return false;
+        }
+
+        if (now - _unconfirmedSince < AutoResyncGrace
+            || !string.Equals(key, _desiredKey, StringComparison.Ordinal)
+            || !IsPublishIdle())
+        {
+            return false;
+        }
+
+        // Se reinicia el margen para no repetir el aviso en cada vuelta si el reenvío
+        // tampoco se confirma (por ejemplo, con Discord cerrado).
+        _unconfirmedSince = now;
+        return true;
+    }
+
+    private bool IsPublishIdle()
+    {
+        lock (_publishGate)
+        {
+            return _pendingPublish is null && _inflightPublish is null;
+        }
     }
 
     /// <summary>
@@ -1396,7 +1500,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         string key,
         bool urgent,
         TimeSpan position = default,
-        DateTimeOffset capturedAt = default)
+        DateTimeOffset capturedAt = default,
+        string trackKey = "")
     {
         if (capturedAt == default)
         {
@@ -1407,7 +1512,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
         lock (_publishGate)
         {
-            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position, capturedAt);
+            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position, capturedAt, trackKey);
             inflight = _inflightPublish;
         }
 
@@ -1464,7 +1569,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     _inflightPublish = supersede;
                 }
 
-                bool published;
+                var published = false;
 
                 try
                 {
@@ -1482,6 +1587,14 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         {
                             _pendingPublish = null;
                         }
+
+                        // Se confirma bajo el mismo bloqueo que el estado de la cola: el
+                        // bucle nunca ve «nada pendiente» con una clave antigua y no fuerza
+                        // un reenvío duplicado.
+                        if (published)
+                        {
+                            _publishedKey = request.Key;
+                        }
                     }
                 }
 
@@ -1492,16 +1605,19 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     if (request.Activity is not null)
                     {
                         _publishedPosition = request.Position;
-                        // Anclar al instante de captura (no al de envío): los timestamps
-                        // publicados están anclados a CapturedAt, así que la detección de
-                        // deriva compara manzanas con manzanas aunque el envío se haya
-                        // retrasado por el límite de Discord.
-                        _publishedAnchorAt = request.CapturedAt;
+                        _publishedTrackKey = request.TrackKey;
+                        // Los timestamps de reproducción están anclados a CapturedAt; los de
+                        // pausa se desplazan al instante real del envío (ShiftTimestampsToNow),
+                        // así que el ancla de deriva debe usar ese mismo instante.
+                        _publishedAnchorAt = request.Activity.FrozenTimestamps
+                            ? DateTimeOffset.UtcNow
+                            : request.CapturedAt;
                         _hasPublishAnchor = true;
                     }
                     else
                     {
                         _hasPublishAnchor = false;
+                        _publishedTrackKey = null;
                     }
                 }
                 else if (!supersede.IsCancellationRequested && request.Activity is not null)
@@ -1681,7 +1797,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         bool Urgent,
         DateTimeOffset QueuedAt,
         TimeSpan Position,
-        DateTimeOffset CapturedAt);
+        DateTimeOffset CapturedAt,
+        string TrackKey);
 
     public async Task StopAsync()
     {

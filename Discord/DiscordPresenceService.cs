@@ -146,8 +146,9 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
     /// <summary>
     /// Espera hasta que Discord acepte otra actualización: ventana deslizante de 20 s con
-    /// 5 huecos. Las actualizaciones urgentes no esperan el hueco mínimo configurado, así
-    /// que el cambio de canción o de reproductor se ve de inmediato.
+    /// 5 huecos. Las actualizaciones urgentes no esperan el hueco mínimo configurado y
+    /// pueden usar el último hueco; las de fondo reservan uno para el próximo cambio de
+    /// canción, así que el título nuevo sale de inmediato.
     /// </summary>
     private async Task WaitForSendSlotAsync(bool urgent, CancellationToken cancellationToken)
     {
@@ -166,7 +167,13 @@ public sealed class DiscordPresenceService : IAsyncDisposable
                     _recentSends.Dequeue();
                 }
 
-                if (_recentSends.Count >= MaxSendsPerWindow)
+                // Los envíos de fondo (latido y reanclaje de pausa) dejan siempre un
+                // hueco libre en la ventana: un cambio de canción nunca espera detrás de
+                // ellos. Si la ventana está llena, el de fondo espera a que caduque el
+                // más antiguo (y una pista nueva lo cancela al instante).
+                var limit = urgent ? MaxSendsPerWindow : Math.Max(1, MaxSendsPerWindow - 1);
+
+                if (_recentSends.Count >= limit)
                 {
                     wait = _recentSends.Peek() + SendWindow - now;
                 }

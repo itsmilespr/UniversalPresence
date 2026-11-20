@@ -23,6 +23,10 @@ public sealed class ArtworkCache
     private readonly object _gate = new();
     private readonly Dictionary<string, ArtworkInfo?> _memo = new(StringComparer.Ordinal);
 
+    // Extracciones en curso por clave. Sin esto, cada vuelta del bucle que agotaba el
+    // timeout lanzaba OTRA lectura/decodificado de la misma miniatura, en paralelo.
+    private readonly Dictionary<string, Task<ArtworkInfo?>> _inflight = new(StringComparer.Ordinal);
+
     public ArtworkCache(AppOptions options, Log log)
     {
         _options = options.Artwork;
@@ -48,14 +52,40 @@ public sealed class ArtworkCache
             return null;
         }
 
+        Task<ArtworkInfo?> pending;
+
         lock (_gate)
         {
             if (_memo.TryGetValue(mediaKey, out var cached))
             {
                 return cached;
             }
+
+            if (!_inflight.TryGetValue(mediaKey, out pending!))
+            {
+                pending = ExtractAndMemoizeAsync(reference, mediaKey, cancellationToken);
+                _inflight[mediaKey] = pending;
+            }
         }
 
+        try
+        {
+            return await pending.ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _inflight.Remove(mediaKey);
+            }
+        }
+    }
+
+    private async Task<ArtworkInfo?> ExtractAndMemoizeAsync(
+        IRandomAccessStreamReference reference,
+        string mediaKey,
+        CancellationToken cancellationToken)
+    {
         ArtworkInfo? info = null;
 
         try

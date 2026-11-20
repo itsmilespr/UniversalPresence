@@ -409,14 +409,14 @@ public sealed class SmtcMonitor : IDisposable
                 }
                 // La lectura de la miniatura (stream + resize + disco) puede tardar varios
                 // segundos en la primera vez; mientras tanto el bucle no puede publicar el
-                // título ni la barra. Se limita a 300 ms: si no llega, se sigue sin
-                // carátula y la siguiente vuelta la toma ya cacheada (el task en segundo
-                // plano la completa).
+                // título ni la barra. Se limita a 180 ms: si no llega, se publica ya el
+                // título y la siguiente vuelta toma la carátula cacheada (ArtworkCache
+                // deduplica la extracción en curso, así que no se decodifica dos veces).
                 ArtworkInfo? artwork = null;
                 if (thumbnail is not null)
                 {
                     var artworkTask = _artwork.GetAsync(thumbnail, mediaKey, cancellationToken);
-                    var timeoutTask = Task.Delay(300, cancellationToken);
+                    var timeoutTask = Task.Delay(180, cancellationToken);
                     var completed = await Task.WhenAny(artworkTask, timeoutTask).ConfigureAwait(false);
                     if (completed == artworkTask)
                     {
@@ -424,7 +424,7 @@ public sealed class SmtcMonitor : IDisposable
                     }
                     else
                     {
-                        _log.Debug($"Lectura de carátula tardó más de 300 ms para '{mediaKey}'; se reintenta en la siguiente vuelta.");
+                        _log.Debug($"Lectura de carátula tardó más de 180 ms para '{mediaKey}'; se reintenta en la siguiente vuelta.");
                         _ = artworkTask.ContinueWith(t =>
                         {
                             if (t.IsFaulted)
