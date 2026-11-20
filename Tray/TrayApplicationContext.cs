@@ -241,8 +241,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         _updateTimer = new System.Windows.Forms.Timer { Interval = 20_000 };
         _updateTimer.Tick += async (_, _) =>
         {
-            _updateTimer.Interval = 6 * 60 * 60 * 1000;
-            await CheckForUpdatesAsync(manual: false);
+            try
+            {
+                _updateTimer.Interval = 6 * 60 * 60 * 1000;
+                await CheckForUpdatesAsync(manual: false);
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"Update check (timer) failed: {ex.Message}");
+            }
         };
         _updateTimer.Start();
 

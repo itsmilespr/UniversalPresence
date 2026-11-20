@@ -23,7 +23,8 @@ public sealed class OverlayForm : Form
         Size = new Size(320, 52);
         BackColor = options.DarkMode ? Color.FromArgb(30, 30, 30) : Color.FromArgb(30, 30, 30);
         Opacity = 0.85;
-        var screen = Screen.PrimaryScreen!;
+        var screen = Screen.PrimaryScreen ?? Screen.AllScreens.FirstOrDefault();
+        if (screen is null) return;
         Location = new Point(screen.WorkingArea.Right - Width - 12, screen.WorkingArea.Bottom - Height - 12);
 
         Controls.Add(_artist);
