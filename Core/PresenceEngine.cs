@@ -1539,7 +1539,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             _metadataGapSince = DateTimeOffset.UtcNow;
         }
 
-        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromSeconds(1);
+        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromMilliseconds(300);
     }
 
     /// <summary>

@@ -30,10 +30,10 @@ public sealed class SmtcMonitor : IDisposable
     // reproductores que no los emiten. Cuanto más largos, menos objetos WinRT se crean.
     // TTLs más cortos: la latencia al cambiar de canción importa más que ahorrar
     // unos MB de objetos WinRT (el GC ya los limpia periódicamente).
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(1);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
@@ -372,7 +372,25 @@ public sealed class SmtcMonitor : IDisposable
 
                     if (!_coverDecisionCache.ContainsKey(cacheKey))
                     {
-                        isReal = await IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken).ConfigureAwait(false);
+                        var browserCoverTask = IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken);
+                        var browserTimeout = Task.Delay(100, cancellationToken);
+                        var browserCompleted = await Task.WhenAny(browserCoverTask, browserTimeout).ConfigureAwait(false);
+                        if (browserCompleted == browserCoverTask)
+                        {
+                            isReal = await browserCoverTask.ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            isReal = false;
+                            _log.Debug($"Verificación de carátula de navegador tardó más de 100 ms para '{aumid}'; se asume no real.");
+                            _ = browserCoverTask.ContinueWith(t =>
+                            {
+                                if (t.IsFaulted)
+                                {
+                                    _log.Debug($"Verificación de carátula falló: {t.Exception?.GetBaseException().Message}");
+                                }
+                            }, TaskContinuationOptions.OnlyOnFaulted);
+                        }
                         lock (_metadataGate)
                         {
                             if (_coverDecisionCache.Count > 128) _coverDecisionCache.Clear();
@@ -389,7 +407,33 @@ public sealed class SmtcMonitor : IDisposable
                     thumbnail = media?.Thumbnail;
                     artworkDecision = "smtc";
                 }
-                var artwork = await _artwork.GetAsync(thumbnail, mediaKey, cancellationToken).ConfigureAwait(false);
+                // La lectura de la miniatura (stream + resize + disco) puede tardar varios
+                // segundos en la primera vez; mientras tanto el bucle no puede publicar el
+                // título ni la barra. Se limita a 300 ms: si no llega, se sigue sin
+                // carátula y la siguiente vuelta la toma ya cacheada (el task en segundo
+                // plano la completa).
+                ArtworkInfo? artwork = null;
+                if (thumbnail is not null)
+                {
+                    var artworkTask = _artwork.GetAsync(thumbnail, mediaKey, cancellationToken);
+                    var timeoutTask = Task.Delay(300, cancellationToken);
+                    var completed = await Task.WhenAny(artworkTask, timeoutTask).ConfigureAwait(false);
+                    if (completed == artworkTask)
+                    {
+                        artwork = await artworkTask.ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _log.Debug($"Lectura de carátula tardó más de 300 ms para '{mediaKey}'; se reintenta en la siguiente vuelta.");
+                        _ = artworkTask.ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                            {
+                                _log.Debug($"Lectura de carátula falló: {t.Exception?.GetBaseException().Message}");
+                            }
+                        }, TaskContinuationOptions.OnlyOnFaulted);
+                    }
+                }
 
                 if (aumid.Length > 0)
                 {
