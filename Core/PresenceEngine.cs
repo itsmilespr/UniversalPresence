@@ -86,6 +86,10 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private string? _unconfirmedKey;
     private DateTimeOffset _unconfirmedSince = DateTimeOffset.MinValue;
 
+    // Seeks detectados por SMTC y último reenvío de la red de seguridad por deriva.
+    private long _seenSeekRevision;
+    private DateTimeOffset _lastDriftResyncAt = DateTimeOffset.MinValue;
+
     // Última pista registrada en el historial / Last.fm: pausar o reanudar la misma
     // canción no debe contarla como otra reproducción.
     private string? _lastLoggedKey;
@@ -539,6 +543,37 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
                     snapshot = ApplyCoverOverride(snapshot);
                     snapshot = ApplyProgramIcon(snapshot);
+
+                    // Seek/arrastre de la barra en la MISMA pista: SMTC avisa con
+                    // TimelinePropertiesChanged. En cuanto llega, se comparan la posición
+                    // real y la que Discord está dibujando y se reenvían los timestamps en
+                    // el acto (antes había que esperar a superar 2,5 s de deriva).
+                    var seekRevision = _monitor.SeekRevision;
+                    if (seekRevision != _seenSeekRevision)
+                    {
+                        _seenSeekRevision = seekRevision;
+
+                        if (snapshot is { IsActive: true }
+                            && _hasPublishAnchor
+                            && string.Equals(_publishedTrackKey, TrackKey(snapshot), StringComparison.Ordinal))
+                        {
+                            var expected = snapshot.Status == PlaybackState.Playing
+                                ? _publishedPosition + (DateTimeOffset.UtcNow - _publishedAnchorAt)
+                                : _publishedPosition;
+                            var seekDelta = (snapshot.Position - expected).Duration();
+
+                            // Un seek de menos de 350 ms no se nota; cualquier salto mayor
+                            // se reenvía ya, sin esperar al latido ni a la deriva.
+                            if (seekDelta > TimeSpan.FromMilliseconds(350))
+                            {
+                                forceRepublish = true;
+                                _desiredKey = null;
+                                _log.Debug(
+                                    $"Seek detectado en «{snapshot.Title}» " +
+                                    $"({FormatPosition(snapshot.Position)}); timestamps reenviados al instante.");
+                            }
+                        }
+                    }
 
                     // Discord renders its own clock from the absolute start/end pair it already
                     // has; a paused track keeps that pair almost unchanged, so resuming it must
@@ -1082,11 +1117,27 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return false;
         }
 
-        var expected = _publishedPosition + (DateTimeOffset.UtcNow - _publishedAnchorAt);
+        var now = DateTimeOffset.UtcNow;
+
+        // Red de seguridad para reproductores que no avisan de los seeks: se reenvía en
+        // cuanto la barra se separa 1,5 s, como mucho una vez cada 3 s (un reproductor con
+        // proyección mala no debe consumir el límite de Discord a base de reenvíos).
+        if (now - _lastDriftResyncAt < TimeSpan.FromSeconds(3))
+        {
+            return false;
+        }
+
+        var expected = _publishedPosition + (now - _publishedAnchorAt);
         var difference = (snapshot.Position - expected).Duration();
 
-        return difference > TimeSpan.FromSeconds(2.5)
-            && difference < TimeSpan.FromMinutes(30);
+        if (difference > TimeSpan.FromSeconds(1.5)
+            && difference < TimeSpan.FromMinutes(30))
+        {
+            _lastDriftResyncAt = now;
+            return true;
+        }
+
+        return false;
     }
 
     private static MediaSnapshot? CarryOverArtwork(MediaSnapshot? snapshot, MediaSnapshot? previous)

@@ -59,6 +59,10 @@ public sealed class SmtcMonitor : IDisposable
     private int _playbackVersion;
     private int _timelineVersion;
 
+    // Detección de seek real (arrastrar la barra / saltar ±10 s) en la pista actual.
+    private long _seekRevision;
+    private DateTimeOffset _lastSeekDetectedAt = DateTimeOffset.MinValue;
+
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private int _consecutiveFailures;
     private bool _disposed;
@@ -75,6 +79,12 @@ public sealed class SmtcMonitor : IDisposable
     public event Action? Changed;
 
     public bool IsReady => _manager is not null;
+
+    /// <summary>
+    /// Se incrementa cuando el reproductor mueve la posición de la pista actual (seek o
+    /// arrastre de la barra). El motor lo usa para reenviar los timestamps al instante.
+    /// </summary>
+    public long SeekRevision => Volatile.Read(ref _seekRevision);
 
     public string ArtworkDirectory => _artwork.Directory;
 
@@ -342,9 +352,9 @@ public sealed class SmtcMonitor : IDisposable
                 // read (tras extraer/subir la portada): así la posición y CapturedAt quedan
                 // sincronizados y la barra no se adelanta/atrasa por el tiempo de artwork.
                 var capturedAt = DateTimeOffset.UtcNow;
-                var (position, duration, lastUpdated) = ReadTimelineCached(
-                    session, aumid, status, projectPosition, force: !projectPosition);
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
+                var (position, duration, lastUpdated) = ReadTimelineCached(
+                    session, aumid, status, projectPosition, force: !projectPosition, mediaKey);
                 // Los navegadores exponen como miniatura SMTC su propio icono o el favicon del
                 // sitio, no la portada real. Se ignora esa miniatura por defecto, pero si la
                 // imagen es lo bastante grande (>= 200 px) se asume que es una portada real
@@ -528,7 +538,8 @@ public sealed class SmtcMonitor : IDisposable
         string aumid,
         PlaybackState status,
         bool projectPosition,
-        bool force)
+        bool force,
+        string mediaKey)
     {
         var now = DateTimeOffset.UtcNow;
         var version = Volatile.Read(ref _timelineVersion);
@@ -549,6 +560,8 @@ public sealed class SmtcMonitor : IDisposable
 
         if (!valid)
         {
+            var previous = cache;
+
             try
             {
                 var timeline = session.GetTimelineProperties();
@@ -573,7 +586,21 @@ public sealed class SmtcMonitor : IDisposable
                     LastUpdated = timeline.LastUpdatedTime,
                     Version = version,
                     At = now,
+                    MediaKey = mediaKey,
                 };
+
+                // Solo se compara con la lectura anterior de la MISMA pista: un cambio de
+                // canción no es un seek (y además ya cambia la clave de actividad).
+                if (previous is not null
+                    && string.Equals(previous.MediaKey, mediaKey, StringComparison.Ordinal))
+                {
+                    DetectSeek(
+                        previous,
+                        timeline.Position,
+                        timeline.LastUpdatedTime,
+                        status,
+                        now);
+                }
 
                 if (aumid.Length > 0)
                 {
@@ -629,6 +656,63 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         return (position, cache.Duration, cache.LastUpdated);
+    }
+
+    /// <summary>
+    /// Detecta un salto real dentro de la misma pista (arrastrar la barra, saltar ±10 s).
+    /// Se apoya en que el reproductor actualiza <c>LastUpdatedTime</c> al moverse: así una
+    /// posición rezagada de un reproductor lento no se confunde con un seek en cada vuelta.
+    /// </summary>
+    private void DetectSeek(
+        TimelineCache previous,
+        TimeSpan reportedPosition,
+        DateTimeOffset reportedLastUpdated,
+        PlaybackState status,
+        DateTimeOffset now)
+    {
+        if (previous.LastUpdated == DateTimeOffset.MinValue
+            || previous.LastUpdated > now.AddSeconds(1)
+            || reportedLastUpdated == DateTimeOffset.MinValue
+            || reportedLastUpdated > now.AddSeconds(1))
+        {
+            return;
+        }
+
+        // Un seek reescribe el instante del timeline. Si no cambió, es avance normal (o el
+        // reproductor no informa de la posición en tiempo real): no se toca nada.
+        if ((reportedLastUpdated - previous.LastUpdated).Duration()
+            < TimeSpan.FromMilliseconds(200))
+        {
+            return;
+        }
+
+        var expected = previous.Position;
+
+        if (status == PlaybackState.Playing)
+        {
+            var elapsed = now - previous.LastUpdated.ToUniversalTime();
+            if (elapsed <= TimeSpan.Zero || elapsed >= TimeSpan.FromMinutes(10))
+            {
+                return;
+            }
+
+            expected += elapsed;
+        }
+
+        var delta = reportedPosition - expected;
+
+        if (delta.Duration() <= TimeSpan.FromSeconds(1)
+            || delta.Duration() >= TimeSpan.FromMinutes(30)
+            || now - _lastSeekDetectedAt < TimeSpan.FromSeconds(1))
+        {
+            return;
+        }
+
+        _lastSeekDetectedAt = now;
+        Interlocked.Increment(ref _seekRevision);
+        _log.Debug(
+            $"Seek detectado: posición {reportedPosition} (esperada {expected}), " +
+            $"status={status}; se resincronizará la barra.");
     }
 
     /// <summary>
@@ -764,6 +848,9 @@ public sealed class SmtcMonitor : IDisposable
         public int Version { get; init; }
 
         public DateTimeOffset At { get; init; }
+
+        /// <summary>Identidad de la pista a la que pertenece esta lectura.</summary>
+        public string MediaKey { get; init; } = "";
     }
 
     private static PlaybackState MapStatus(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status) => status switch

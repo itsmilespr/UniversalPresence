@@ -167,7 +167,7 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `TreatStoppedAsPaused` | `false` | Para integraciones que reportan `Stopped` al pausar. |
 | `ClearWhenIdle` | `false` | Oculta la presencia si el PC está inactivo o bloqueado. |
 | `IdleSeconds` | `600` | Segundos sin actividad para considerar ausencia (30–86400). |
-| `ResyncProgressDrift` | `true` | Reenvía los timestamps si la posición real se aleja más de 2,5 s de la barra publicada. |
+| `ResyncProgressDrift` | `true` | Red de seguridad: reenvía los timestamps si la posición real se aleja más de 1,5 s de la barra publicada (como mucho cada 3 s). Los seeks/arrastres de la barra se detectan por el evento de timeline de SMTC y se reenvían al instante. |
 | `UpdateChannel` | `"stable"` | `stable` o `beta` (incluye pre-releases). |
 | `CoverOverrides` | `{}` | `{"Spotify.exe": "https://…"}` o ruta de archivo: portada propia por app. |
 | `LastFmApiKey` / `LastFmSecret` | `""` | Credenciales de la API de Last.fm (cifradas en `secrets.dpapi.json`). |
