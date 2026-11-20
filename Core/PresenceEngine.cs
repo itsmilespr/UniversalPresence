@@ -548,6 +548,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     // TimelinePropertiesChanged. En cuanto llega, se comparan la posición
                     // real y la que Discord está dibujando y se reenvían los timestamps en
                     // el acto (antes había que esperar a superar 2,5 s de deriva).
+                    var seekedCurrentTrack = false;
                     var seekRevision = _monitor.SeekRevision;
                     if (seekRevision != _seenSeekRevision)
                     {
@@ -584,6 +585,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                                 // mayor se reenvía ya, sin esperar al latido ni a la deriva.
                                 if (seekDelta > TimeSpan.FromMilliseconds(350))
                                 {
+                                    seekedCurrentTrack = true;
                                     forceRepublish = true;
                                     _desiredKey = null;
                                     _log.Debug(
@@ -635,7 +637,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     // Conteo de reproducciones consecutivas de la misma canción. Solo sube
                     // cuando vuelve de verdad al principio: arrastrar la barra hacia atrás o
                     // una lectura momentánea en 0 no cuentan como otra reproducción.
-                    UpdatePlayCount(_lastSnapshot, snapshot);
+                    UpdatePlayCount(_lastSnapshot, snapshot, seekedCurrentTrack);
 
                     if (snapshot is not null && snapshot.IsActive)
                     {
@@ -1749,7 +1751,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// atrás, un salto de posición o un dato momentáneo en 0:00 no suman una reproducción
     /// que nunca ocurrió (el bug de las canciones que solo habían sonado una vez).
     /// </summary>
-    private void UpdatePlayCount(MediaSnapshot? previous, MediaSnapshot? current)
+    private void UpdatePlayCount(MediaSnapshot? previous, MediaSnapshot? current, bool seeked)
     {
         if (current is null || !current.IsActive)
         {
@@ -1771,6 +1773,14 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
         if (StartedOver(previous, current))
         {
+            if (seeked)
+            {
+                // Arrastrar la barra hasta el principio no es una reproducción nueva:
+                // el seek lo confirma SMTC y no debe inflar el contador «×N».
+                ClearRepeatCandidate();
+                return;
+            }
+
             // Todavía no se cuenta: se confirma con la lectura siguiente.
             _repeatCandidateKey = current.ActivityKey;
             _repeatCandidateAt = DateTimeOffset.UtcNow;
