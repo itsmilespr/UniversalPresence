@@ -17,6 +17,7 @@ public sealed class DiscordPresenceService : IAsyncDisposable
     private readonly AppOptions _options;
     private readonly Log _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _retryGate = new();
     private readonly Queue<DateTimeOffset> _recentSends = new();
 
     private DiscordIpcClient? _client;
@@ -241,7 +242,11 @@ public sealed class DiscordPresenceService : IAsyncDisposable
             await DropClientAsync().ConfigureAwait(false);
         }
 
-        var nextAttemptAt = _nextAttemptAt;
+        DateTimeOffset nextAttemptAt;
+        lock (_retryGate)
+        {
+            nextAttemptAt = _nextAttemptAt;
+        }
         if (DateTimeOffset.UtcNow < nextAttemptAt)
         {
             return false;
@@ -265,8 +270,11 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
         client.Closed += OnClientClosed;
         _client = client;
-        _backoff = TimeSpan.FromSeconds(1);
-        _nextAttemptAt = DateTimeOffset.MinValue;
+        lock (_retryGate)
+        {
+            _backoff = TimeSpan.FromSeconds(1);
+            _nextAttemptAt = DateTimeOffset.MinValue;
+        }
         SetState(DiscordConnectionState.Connected);
         _log.Info("Conectado a Discord (RPC por IPC).");
         return true;
@@ -274,8 +282,11 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
     private void ScheduleRetry()
     {
-        _nextAttemptAt = DateTimeOffset.UtcNow + _backoff;
-        _backoff = TimeSpan.FromSeconds(Math.Min(_backoff.TotalSeconds * 2, 30));
+        lock (_retryGate)
+        {
+            _nextAttemptAt = DateTimeOffset.UtcNow + _backoff;
+            _backoff = TimeSpan.FromSeconds(Math.Min(_backoff.TotalSeconds * 2, 30));
+        }
     }
 
     private void OnClientClosed(DiscordIpcClient client)
@@ -287,7 +298,7 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
         _log.Info("Discord cerró la conexión; se reintentará automáticamente.");
         SetState(DiscordConnectionState.Disconnected);
-        lock (_gate)
+        lock (_retryGate)
         {
             _nextAttemptAt = DateTimeOffset.UtcNow;
             _backoff = TimeSpan.FromSeconds(1);

@@ -23,6 +23,9 @@ public static class ImageOptimizer
     /// <summary>Resultado listo para subir; si no convenía tocarla, devuelve la original.</summary>
     public sealed record Prepared(byte[] Bytes, string ContentType, string FileName, bool Changed);
 
+    private static readonly ImageCodecInfo? JpegCodec = ImageCodecInfo.GetImageEncoders()
+        .FirstOrDefault(codec => codec.FormatID == ImageFormat.Jpeg.Guid);
+
     public static Prepared Prepare(byte[] input, string contentType, string fileName)
     {
         if (input.Length == 0)
@@ -103,8 +106,7 @@ public static class ImageOptimizer
 
         if (ReferenceEquals(format, ImageFormat.Jpeg))
         {
-            var encoder = ImageCodecInfo.GetImageEncoders()
-                .FirstOrDefault(codec => codec.FormatID == ImageFormat.Jpeg.Guid);
+            var encoder = JpegCodec;
 
             if (encoder is not null)
             {
