@@ -168,6 +168,7 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `ClearWhenIdle` | `false` | Oculta la presencia si el PC está inactivo o bloqueado. |
 | `IdleSeconds` | `600` | Segundos sin actividad para considerar ausencia (30–86400). |
 | `ResyncProgressDrift` | `true` | Red de seguridad: reenvía los timestamps si la posición real se aleja más de 1,5 s de la barra publicada (como mucho cada 3 s). Los seeks/arrastres de la barra se detectan por el evento de timeline de SMTC y se reenvían al instante. |
+| `ResyncEverySeconds` | `5` | Cada cuántos segundos se compara la barra con la posición real y se reenvía si se desvió más de 400 ms. `0` desactiva la comprobación. |
 | `UpdateChannel` | `"stable"` | `stable` o `beta` (incluye pre-releases). |
 | `CoverOverrides` | `{}` | `{"Spotify.exe": "https://…"}` o ruta de archivo: portada propia por app. |
 | `LastFmApiKey` / `LastFmSecret` | `""` | Credenciales de la API de Last.fm (cifradas en `secrets.dpapi.json`). |

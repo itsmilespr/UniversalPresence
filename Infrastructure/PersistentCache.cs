@@ -24,6 +24,7 @@ public sealed class PersistentCache
     private readonly string _path;
     private readonly Log _log;
     private readonly TimeSpan _successTtl;
+    private readonly TimeSpan _failureTtl;
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
 
@@ -31,11 +32,20 @@ public sealed class PersistentCache
     /// Cuánto se reutiliza un acierto. Las URLs de un host temporal (Litterbox) necesitan un
     /// TTL menor que su vida real; las búsquedas de catálogo pueden durar días.
     /// </param>
-    public PersistentCache(string path, Log log, TimeSpan? successTtl = null)
+    /// <param name="failureTtl">
+    /// Cuánto se recuerda un fallo antes de reintentarlo. Corto para carátulas (un fallo
+    /// transitorio no debe dejar la canción sin portada 10 minutos) y normal para catálogos.
+    /// </param>
+    public PersistentCache(
+        string path,
+        Log log,
+        TimeSpan? successTtl = null,
+        TimeSpan? failureTtl = null)
     {
         _path = path;
         _log = log;
         _successTtl = successTtl ?? DefaultSuccessTtl;
+        _failureTtl = failureTtl ?? FailureTtl;
         Load();
     }
 
@@ -115,7 +125,7 @@ public sealed class PersistentCache
             {
                 Value = value,
                 CreatedAt = now,
-                ExpiresAt = now + (value is null ? FailureTtl : _successTtl),
+                ExpiresAt = now + (value is null ? _failureTtl : _successTtl),
             };
 
             if (_entries.Count > MaxEntries)

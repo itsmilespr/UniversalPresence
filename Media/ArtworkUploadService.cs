@@ -53,10 +53,13 @@ public sealed class ArtworkUploadService
     {
         _options = options;
         _log = log;
+        // Un fallo se recuerda solo 60 s: si el host tuvo un corte momentáneo, la portada
+        // se reintenta dentro de la misma canción en lugar de quedarse sin imagen 10 min.
         _cache = new PersistentCache(
             Path.Combine(AppOptions.LocalDataDirectory, "covers-cache.json"),
             log,
-            RemoteAssetPolicy.EntryTtl);
+            RemoteAssetPolicy.EntryTtl,
+            failureTtl: TimeSpan.FromSeconds(60));
     }
 
     /// <summary>URL pública ya subida, con su antigüedad y lo que conviene hacer con ella.</summary>
@@ -102,6 +105,12 @@ public sealed class ArtworkUploadService
 
     /// <summary>Descarta la URL cacheada de una carátula (el host ya la borró).</summary>
     public void Invalidate(ArtworkInfo artwork) => _cache.Remove(KeyFor(artwork));
+
+    /// <summary>
+    /// Olvida los fallos cacheados: al cambiar el host, el token o la conexión hay que
+    /// reintentar la subida al momento, no esperar al TTL negativo.
+    /// </summary>
+    public void InvalidateFailures() => _cache.ClearFailures();
 
     /// <summary>Marca una URL como comprobada en esta ejecución (no se repite el HEAD).</summary>
     public void MarkRevalidated(string url) => _revalidated[url] = 0;

@@ -18,10 +18,15 @@ public sealed class ArtworkCache
 {
     private const long MaxArtworkBytes = 8 * 1024 * 1024;
 
+    /// <summary>Un fallo de lectura se reintenta pronto, pero no en cada vuelta del bucle.</summary>
+    private static readonly TimeSpan NegativeTtl = TimeSpan.FromSeconds(45);
+
     private readonly ArtworkOptions _options;
     private readonly Log _log;
     private readonly object _gate = new();
-    private readonly Dictionary<string, ArtworkInfo?> _memo = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MemoEntry> _memo = new(StringComparer.Ordinal);
+
+    private sealed record MemoEntry(ArtworkInfo? Info, DateTimeOffset At);
 
     // Extracciones en curso por clave. Sin esto, cada vuelta del bucle que agotaba el
     // timeout lanzaba OTRA lectura/decodificado de la misma miniatura, en paralelo.
@@ -58,7 +63,15 @@ public sealed class ArtworkCache
         {
             if (_memo.TryGetValue(mediaKey, out var cached))
             {
-                return cached;
+                // Un acierto se reutiliza siempre; un fallo solo durante NegativeTtl, para
+                // que una lectura transitoria no deje la pista sin carátula para siempre.
+                if (cached.Info is not null
+                    || DateTimeOffset.UtcNow - cached.At < NegativeTtl)
+                {
+                    return cached.Info;
+                }
+
+                _memo.Remove(mediaKey);
             }
 
             if (!_inflight.TryGetValue(mediaKey, out pending!))
@@ -109,7 +122,7 @@ public sealed class ArtworkCache
                 _memo.Clear();
             }
 
-            _memo[mediaKey] = info;
+            _memo[mediaKey] = new MemoEntry(info, DateTimeOffset.UtcNow);
         }
 
         return info;

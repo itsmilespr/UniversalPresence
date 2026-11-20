@@ -62,6 +62,13 @@ public sealed class AppOptions
     public int PollIntervalMs { get; set; } = 1000;
 
     /// <summary>
+    /// Cada cuántos segundos se comprueba la barra publicada contra la posición real y se
+    /// reenvían los timestamps si se desvió más de 400 ms. 0 desactiva la comprobación.
+    /// Es independiente de los eventos de seek, que se atienden al instante.
+    /// </summary>
+    public int ResyncEverySeconds { get; set; } = 5;
+
+    /// <summary>
     /// Hueco mínimo entre dos actualizaciones que no cambian lo que se ve (latido y
     /// reanclaje de pausa). Los cambios de pista, de reproductor o la llegada de la
     /// portada se envían al instante, sin pasar de ~5 actualizaciones cada 20 s, que es
@@ -484,6 +491,7 @@ public sealed class AppOptions
     public void Normalize()
     {
         PollIntervalMs = Math.Clamp(PollIntervalMs, 250, 60_000);
+        ResyncEverySeconds = Math.Clamp(ResyncEverySeconds, 0, 300);
         MinUpdateIntervalMs = Math.Clamp(MinUpdateIntervalMs, 1_000, 60_000);
         HeartbeatSeconds = Math.Clamp(HeartbeatSeconds, 0, 3_600);
         PauseRefreshSeconds = Math.Clamp(PauseRefreshSeconds, 0, 120);

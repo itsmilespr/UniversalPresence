@@ -89,6 +89,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     // Seeks detectados por SMTC y último reenvío de la red de seguridad por deriva.
     private long _seenSeekRevision;
     private DateTimeOffset _lastDriftResyncAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextPeriodicResync = DateTimeOffset.MinValue;
+    private DateTimeOffset _nextQueueKick = DateTimeOffset.MinValue;
 
     // Última pista registrada en el historial / Last.fm: pausar o reanudar la misma
     // canción no debe contarla como otra reproducción.
@@ -289,6 +291,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         // valen: se descartan para que la portada y el icono se reintenten al instante.
         _externalAssets.InvalidateFailures();
         _programIcons.InvalidateFailures();
+        _artworkUpload.InvalidateFailures();
 
         Interlocked.Exchange(ref _forceRepublish, 1);
         Interlocked.Exchange(ref _restartMonitorRequested, 1);
@@ -689,6 +692,20 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             "resincronización automática.");
                     }
 
+                    // Empezó una pista nueva: se reintentan las subidas de portadas que
+                    // quedaron pendientes (como mucho una vez cada 30 s). Se salta si la
+                    // portada de ESTA pista aún se está preparando: es más importante que
+                    // una subida antigua no le quite el turno.
+                    var currentCoverPending = snapshot is { Artwork: not null }
+                        && _resolvingCovers.ContainsKey(CoverKey(snapshot.Artwork));
+
+                    if (!currentCoverPending
+                        && snapshot is { IsActive: true }
+                        && !string.Equals(key, _publishedKey, StringComparison.Ordinal))
+                    {
+                        MaybeKickUploadQueue();
+                    }
+
                     // Historial de escucha: se registra cuando aparece una pista nueva.
                     // Se compara por identidad de pista (sin el estado): pausar o reanudar
                     // la misma canción no cuenta como otra reproducción ni la vuelve a
@@ -765,6 +782,26 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             $"({FormatPosition(snapshot.Position)}); resincronizando la barra.");
                     }
 
+                    // Comprobación periódica (5 s por defecto): aunque no llegue ningún
+                    // evento, si la barra publicada se separó más de 400 ms de la posición
+                    // real se reenvía. En reproducción normal la diferencia es ~0 y no se
+                    // envía nada, así que no gasta huecos del límite de Discord.
+                    if (_options.ResyncEverySeconds > 0
+                        && snapshot is { IsActive: true }
+                        && DateTimeOffset.UtcNow >= _nextPeriodicResync)
+                    {
+                        _nextPeriodicResync = DateTimeOffset.UtcNow.AddSeconds(_options.ResyncEverySeconds);
+
+                        if (HasPeriodicProgressDrift(snapshot))
+                        {
+                            forceRepublish = true;
+                            _desiredKey = null;
+                            _log.Debug(
+                                $"Resincronización periódica en «{snapshot.Title}» " +
+                                $"({FormatPosition(snapshot.Position)}); reenviando timestamps.");
+                        }
+                    }
+
                     var urgent = forceRepublish
                         || driftResync
                         || !string.Equals(key, _desiredKey, StringComparison.Ordinal);
@@ -796,11 +833,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
                     SetStatus(Describe(snapshot));
 
-                    // Cada diez minutos se reintentan las subidas pendientes mientras la
+                    // Cada dos minutos se reintentan las subidas pendientes mientras la
                     // app sigue viva (la red puede volver sin reiniciar nada).
                     if (DateTimeOffset.UtcNow >= _nextQueueDrain)
                     {
-                        _nextQueueDrain = DateTimeOffset.UtcNow.AddMinutes(10);
+                        _nextQueueDrain = DateTimeOffset.UtcNow.AddMinutes(2);
                         StartQueueDrain();
                     }
 
@@ -1126,6 +1163,42 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// a partir del último envío. Es la red de seguridad para reproductores que no emiten
     /// eventos de timeline: la barra se resincroniza sin esperar al latido.
     /// </summary>
+    /// <summary>
+    /// Comprobación periódica de la barra: cualquier desviación de más de 400 ms se
+    /// reenvía. Se llama cada <see cref="AppOptions.ResyncEverySeconds"/> segundos.
+    /// </summary>
+    private bool HasPeriodicProgressDrift(MediaSnapshot snapshot)
+    {
+        if (!_hasPublishAnchor
+            || _publishedAtUnixMs == 0
+            || snapshot.Duration <= TimeSpan.Zero
+            || !string.Equals(_publishedTrackKey, TrackKey(snapshot), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var expected = snapshot.Status == PlaybackState.Playing
+            ? _publishedPosition + (now - _publishedAnchorAt)
+            : _publishedPosition;
+        var difference = (snapshot.Position - expected).Duration();
+
+        return difference > TimeSpan.FromMilliseconds(400)
+            && difference < TimeSpan.FromMinutes(30);
+    }
+
+    private void MaybeKickUploadQueue()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now < _nextQueueKick)
+        {
+            return;
+        }
+
+        _nextQueueKick = now.AddSeconds(30);
+        StartQueueDrain();
+    }
+
     private bool HasProgressDrift(MediaSnapshot? snapshot)
     {
         if (!_options.ResyncProgressDrift
