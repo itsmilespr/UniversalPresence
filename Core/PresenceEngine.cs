@@ -553,24 +553,43 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     {
                         _seenSeekRevision = seekRevision;
 
-                        if (snapshot is { IsActive: true }
-                            && _hasPublishAnchor
-                            && string.Equals(_publishedTrackKey, TrackKey(snapshot), StringComparison.Ordinal))
+                        if (snapshot is { IsActive: true })
                         {
-                            var expected = snapshot.Status == PlaybackState.Playing
-                                ? _publishedPosition + (DateTimeOffset.UtcNow - _publishedAnchorAt)
-                                : _publishedPosition;
-                            var seekDelta = (snapshot.Position - expected).Duration();
+                            // La lectura del bucle pudo empezar antes del seek: se relee la
+                            // sesión para anclar los timestamps a la posición exacta que el
+                            // reproductor reporta ahora (sin proyectarla).
+                            var afterSeek = await _monitor
+                                .ReadFreshAsync(snapshot.AppUserModelId, cancellationToken)
+                                .ConfigureAwait(false);
 
-                            // Un seek de menos de 350 ms no se nota; cualquier salto mayor
-                            // se reenvía ya, sin esperar al latido ni a la deriva.
-                            if (seekDelta > TimeSpan.FromMilliseconds(350))
+                            if (afterSeek is { IsActive: true })
                             {
-                                forceRepublish = true;
-                                _desiredKey = null;
-                                _log.Debug(
-                                    $"Seek detectado en «{snapshot.Title}» " +
-                                    $"({FormatPosition(snapshot.Position)}); timestamps reenviados al instante.");
+                                snapshot = ApplyArtwork(afterSeek, snapshot);
+                                snapshot = ApplyCoverOverride(snapshot);
+                                snapshot = ApplyProgramIcon(snapshot);
+                            }
+
+                            if (_hasPublishAnchor
+                                && string.Equals(
+                                    _publishedTrackKey,
+                                    TrackKey(snapshot!),
+                                    StringComparison.Ordinal))
+                            {
+                                var expected = snapshot!.Status == PlaybackState.Playing
+                                    ? _publishedPosition + (DateTimeOffset.UtcNow - _publishedAnchorAt)
+                                    : _publishedPosition;
+                                var seekDelta = (snapshot.Position - expected).Duration();
+
+                                // Un seek de menos de 350 ms no se nota; cualquier salto
+                                // mayor se reenvía ya, sin esperar al latido ni a la deriva.
+                                if (seekDelta > TimeSpan.FromMilliseconds(350))
+                                {
+                                    forceRepublish = true;
+                                    _desiredKey = null;
+                                    _log.Debug(
+                                        $"Seek detectado en «{snapshot.Title}» " +
+                                        $"({FormatPosition(snapshot.Position)}); timestamps reenviados al instante.");
+                                }
                             }
                         }
                     }
