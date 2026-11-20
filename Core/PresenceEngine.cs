@@ -1620,9 +1620,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         _publishedTrackKey = null;
                     }
                 }
-                else if (!supersede.IsCancellationRequested && request.Activity is not null)
+                else if (!supersede.IsCancellationRequested)
                 {
                     // Discord no estaba disponible: que el bucle lo vuelva a intentar.
+                    // También para los borrados (Activity null): si no, un "quitar la
+                    // presencia" fallido dejaría la canción anterior fija en Discord.
                     _desiredKey = null;
                 }
             }
