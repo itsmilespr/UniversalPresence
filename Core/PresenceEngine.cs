@@ -683,7 +683,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             activity,
                             key,
                             urgent,
-                            snapshot?.Position ?? TimeSpan.Zero);
+                            snapshot?.Position ?? TimeSpan.Zero,
+                            snapshot?.CapturedAt ?? DateTimeOffset.UtcNow);
                     }
 
                     SetStatus(Describe(snapshot));
@@ -1394,13 +1395,19 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         DiscordActivity? activity,
         string key,
         bool urgent,
-        TimeSpan position = default)
+        TimeSpan position = default,
+        DateTimeOffset capturedAt = default)
     {
+        if (capturedAt == default)
+        {
+            capturedAt = DateTimeOffset.UtcNow;
+        }
+
         CancellationTokenSource? inflight;
 
         lock (_publishGate)
         {
-            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position);
+            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position, capturedAt);
             inflight = _inflightPublish;
         }
 
@@ -1485,7 +1492,11 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                     if (request.Activity is not null)
                     {
                         _publishedPosition = request.Position;
-                        _publishedAnchorAt = DateTimeOffset.UtcNow;
+                        // Anclar al instante de captura (no al de envío): los timestamps
+                        // publicados están anclados a CapturedAt, así que la detección de
+                        // deriva compara manzanas con manzanas aunque el envío se haya
+                        // retrasado por el límite de Discord.
+                        _publishedAnchorAt = request.CapturedAt;
                         _hasPublishAnchor = true;
                     }
                     else
@@ -1669,7 +1680,8 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         string Key,
         bool Urgent,
         DateTimeOffset QueuedAt,
-        TimeSpan Position);
+        TimeSpan Position,
+        DateTimeOffset CapturedAt);
 
     public async Task StopAsync()
     {
