@@ -497,7 +497,7 @@ public sealed class SettingsForm : Form
             if (_profileBox.SelectedItem is not string name) return;
             if (ProfileService.Switch(_options, name))
             {
-                _selectedLanguage = _options.Language;
+                ReloadFromOptions();
                 _onSaved();
                 MessageBox.Show(this, $"Switched to profile '{name}'.", _ui.AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
@@ -510,9 +510,8 @@ public sealed class SettingsForm : Form
             {
                 ProfileService.Save(_options, name);
                 ProfileService.Switch(_options, name);
-                _selectedLanguage = _options.Language;
-                RefreshProfileList();
                 _newProfileName.Clear();
+                ReloadFromOptions();
                 _onSaved();
             }
             catch (Exception ex)
@@ -781,7 +780,8 @@ public sealed class SettingsForm : Form
         _options.LastFmApiKey = apiKey;
         _options.LastFmSecret = secret;
 
-        var service = new LastFmService(_options, Log.Create(_options, console: false));
+        using var log = Log.Create(_options, console: false);
+        var service = new LastFmService(_options, log);
 
         try
         {
@@ -1065,8 +1065,10 @@ public sealed class SettingsForm : Form
             try
             {
                 var path = Path.Combine(AppOptions.LocalDataDirectory, "command.txt");
+                var temp = path + ".tmp";
                 Directory.CreateDirectory(AppOptions.LocalDataDirectory);
-                File.WriteAllText(path, "restore-now");
+                File.WriteAllText(temp, "restore-now");
+                File.Move(temp, path, overwrite: true);
             }
             catch (Exception ex)
             {
@@ -1656,6 +1658,37 @@ public sealed class SettingsForm : Form
         _tabs.TabPages.Add(MakeTab(_ui.LastFmTab, BuildLastFmTab()));
         _tabs.TabPages.Add(MakeTab(_strings["AdvancedTab"], BuildAdvancedTab()));
         if (index >= 0 && index < _tabs.TabPages.Count) _tabs.SelectedIndex = index;
+    }
+
+    /// <summary>
+    /// Reconstruye la ventana desde las opciones cargadas (cambio de perfil). Sin esto los
+    /// controles seguían mostrando el perfil anterior y, al cerrar, lo sobrescribían con
+    /// valores obsoletos.
+    /// </summary>
+    private void ReloadFromOptions()
+    {
+        _selectedLanguage = string.IsNullOrWhiteSpace(_options.Language) ? "en" : _options.Language.Trim();
+        _ignored = _options.IgnoredPlayers.ToList();
+        _overrides = new Dictionary<string, string>(_options.CoverOverrides, StringComparer.OrdinalIgnoreCase);
+        _trackOverrides = new Dictionary<string, string>(_options.TrackCoverOverrides, StringComparer.OrdinalIgnoreCase);
+        _templates = new Dictionary<string, PresenceTemplate>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var pair in _options.PlayerTemplates)
+        {
+            if (pair.Value is not null && !string.IsNullOrWhiteSpace(pair.Key))
+            {
+                _templates[pair.Key] = PresenceTemplate.Create(
+                    pair.Value.Details,
+                    pair.Value.State,
+                    pair.Value.LargeText);
+            }
+        }
+
+        _ui = UiText.For(_selectedLanguage);
+        _strings = UiStrings.For(_selectedLanguage);
+        Text = _ui.SettingsTitle;
+        RebuildTabs();
+        ApplyTheme();
     }
 
     private bool SaveSettings()

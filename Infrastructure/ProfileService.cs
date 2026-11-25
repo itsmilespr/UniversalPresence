@@ -51,7 +51,10 @@ public static class ProfileService
         Directory.CreateDirectory(DirectoryPath);
         options.ActiveProfile = name;
         options.ConfigPath = PathFor(name);
-        File.WriteAllText(options.ConfigPath, JsonSerializer.Serialize(options, AppOptions.SerializerOptionsPublic));
+
+        // Save() también persiste los secretos y escribe de forma atómica; un
+        // File.WriteAllText directo dejaba fuera los tokens de Discord y Last.fm.
+        options.Save();
     }
 
     public static AppOptions Load(string name)
@@ -75,6 +78,7 @@ public static class ProfileService
         options2.ActiveProfile = name;
         options2.ConfigPath = path;
         options2.Normalize();
+        AppOptions.LoadSecrets(options2);
         return options2;
     }
 

@@ -27,6 +27,13 @@ public sealed record MediaSnapshot
 
     public string Artist { get; init; } = "";
 
+    /// <summary>
+    /// Lista completa de artistas para mostrar cuando el reproductor solo entrega el
+    /// principal (por ejemplo, Spotify con artistas invitados). Vacío significa que
+    /// <see cref="Artist"/> ya es la lista completa.
+    /// </summary>
+    public string ArtistDisplay { get; init; } = "";
+
     public string Album { get; init; } = "";
 
     public string AlbumArtist { get; init; } = "";
@@ -59,6 +66,9 @@ public sealed record MediaSnapshot
 
     public bool IsActive => Status is PlaybackState.Playing or PlaybackState.Paused;
 
+    /// <summary>Artista que debe mostrarse: la lista completa si se conoce, si no el de SMTC.</summary>
+    public string DisplayArtist => string.IsNullOrWhiteSpace(ArtistDisplay) ? Artist : ArtistDisplay;
+
     /// <summary>Stable key for activity de-duplication (position is intentionally excluded).</summary>
     public string ActivityKey => string.Join(
         '|',
@@ -79,7 +89,7 @@ public sealed record MediaSnapshot
                 return PlayerName;
             }
 
-            return string.IsNullOrWhiteSpace(Artist) ? Title : $"{Title} — {Artist}";
+            return string.IsNullOrWhiteSpace(DisplayArtist) ? Title : $"{Title} — {DisplayArtist}";
         }
     }
 }

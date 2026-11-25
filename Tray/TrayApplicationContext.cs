@@ -342,13 +342,19 @@ public sealed class TrayApplicationContext : ApplicationContext
             var snap = _engine.LastSnapshot;
             if (_options.ShowTrackChangeToast && snap is { IsActive: true })
             {
-                var key = $"{snap.Title}|{snap.Artist}";
+                var key = $"{snap.Title}|{snap.DisplayArtist}";
                 if (!string.Equals(key, _lastToastTrack, StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(snap.Title))
                 {
                     _lastToastTrack = key;
-                    var text = string.IsNullOrWhiteSpace(snap.Artist) ? snap.Title : $"{snap.Title} — {snap.Artist}";
+                    var text = string.IsNullOrWhiteSpace(snap.DisplayArtist) ? snap.Title : $"{snap.Title} — {snap.DisplayArtist}";
                     _notifyIcon.ShowBalloonTip(4_000, _ui.AppName, text, ToolTipIcon.Info);
                 }
+            }
+            else if (snap is not { IsActive: true })
+            {
+                // Al quedarse sin reproducción se olvida la última pista: si el usuario
+                // vuelve a poner la misma canción, el aviso debe aparecer otra vez.
+                _lastToastTrack = "";
             }
         }
         catch { }
@@ -417,8 +423,22 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             var p = Path.Combine(AppOptions.LocalDataDirectory, "command.txt");
             if (!File.Exists(p)) return;
-            var cmd = File.ReadAllText(p).Trim().ToLowerInvariant();
-            File.Delete(p);
+
+            // Se reclama el archivo con un rename atómico antes de leerlo. Si se leyera y
+            // se borrara directamente, un comando nuevo escrito entre ambas operaciones
+            // podía desaparecer sin ejecutarse.
+            var claimed = p + ".processing";
+            File.Move(p, claimed, overwrite: true);
+
+            string cmd;
+            try
+            {
+                cmd = File.ReadAllText(claimed).Trim().ToLowerInvariant();
+            }
+            finally
+            {
+                try { File.Delete(claimed); } catch { }
+            }
             switch (cmd)
             {
                 case "pause": _engine.SetPaused(true); break;
@@ -833,6 +853,9 @@ public sealed class TrayApplicationContext : ApplicationContext
 
             _engine.Updated -= OnEngineUpdated;
             _engine.Dispose();
+
+            // Sin esto, `--status` seguía mostrando la última canción después de cerrar.
+            try { File.Delete(Path.Combine(AppOptions.LocalDataDirectory, "status.txt")); } catch { }
 
             // Cualquier cierre ordenado instala la actualización descargada: el script
             // espera a que este proceso desaparezca antes de reemplazar el .exe.

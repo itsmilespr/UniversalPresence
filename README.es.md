@@ -131,6 +131,12 @@ desactivar en el menú del icono o con `"AutoUpdate": false`.
 - Algunos reproductores no exponen carátula o duración por SMTC: se muestran los campos que sí
   ofrecen.
 
+## Hoja de ruta
+
+- Traducir la ventana de configuración (ahora solo en español).
+- Añadir pruebas unitarias para la lógica pura de `Core/` y `Media/`.
+- Firmar el ejecutable publicado para evitar el aviso de SmartScreen.
+
 ## Licencia
 
 [MIT](LICENSE). Puedes usarlo, modificarlo y redistribuirlo conservando el aviso de copyright.

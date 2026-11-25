@@ -245,7 +245,22 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                 // Discord acknowledges accepted commands without an event name.
                 if (string.Equals(command, "SET_ACTIVITY", StringComparison.Ordinal))
                 {
-                    _log.Debug("Discord confirmed SET_ACTIVITY (activity accepted).");
+                    // Algunos rechazos llegan como respuesta con código en `data` sin evt=ERROR.
+                    if (root.TryGetProperty("data", out var data)
+                        && data.ValueKind == JsonValueKind.Object
+                        && data.TryGetProperty("code", out var code)
+                        && code.ValueKind == JsonValueKind.Number)
+                    {
+                        var message = data.TryGetProperty("message", out var msg)
+                            && msg.ValueKind == JsonValueKind.String
+                            ? msg.GetString()
+                            : "";
+                        _log.Warn($"Discord rechazó la actividad (código {code.GetInt32()}): {message}");
+                    }
+                    else
+                    {
+                        _log.Debug("Discord confirmed SET_ACTIVITY (activity accepted).");
+                    }
                 }
 
                 return;
@@ -259,7 +274,7 @@ public sealed class DiscordIpcClient : IAsyncDisposable
                     break;
 
                 case "ERROR":
-                    _log.Warn($"Discord returned an error on handshake: {root.GetRawText()}");
+                    _log.Warn($"Discord devolvió un error: {root.GetRawText()}");
                     _ready.TrySetResult(false);
                     break;
             }

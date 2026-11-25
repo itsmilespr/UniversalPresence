@@ -41,7 +41,7 @@ public sealed class OverlayForm : Form
             if (InvokeRequired) { BeginInvoke(new Action(RefreshOverlay)); return; }
             var snap = _engine.LastSnapshot;
             _title.Text = snap?.Title ?? "Universal Presence";
-            _artist.Text = snap is { IsActive: true } ? (snap.Artist ?? "") : (_engine.Paused ? "Paused" : "No playback");
+            _artist.Text = snap is { IsActive: true } ? (snap.DisplayArtist ?? "") : (_engine.Paused ? "Paused" : "No playback");
         }
         catch { }
     }

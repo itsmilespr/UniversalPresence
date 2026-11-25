@@ -17,8 +17,8 @@ public sealed class SmtcMonitor : IDisposable
 {
     private readonly AppOptions _options;
     private readonly Log _log;
-    private readonly PlayerIdentityResolver _identity;
-    private readonly ArtworkCache _artwork;
+    private PlayerIdentityResolver _identity;
+    private ArtworkCache _artwork;
     private readonly SemaphoreSlim _startGate = new(1, 1);
     /// <summary>
     /// Cada llamada a GetSessions/GetCurrentSession/TryGetMediaPropertiesAsync crea objetos
@@ -26,14 +26,14 @@ public sealed class SmtcMonitor : IDisposable
     /// referencias nativas se acumulaban hasta cientos de MB. Se cachean y solo se releen
     /// cuando el evento correspondiente avisa (o cada pocos segundos, como red de seguridad).
     /// </summary>
-    // Los eventos son la vía normal; estos TTL son solo la red de seguridad para
-    // reproductores que no los emiten. Cuanto más largos, menos objetos WinRT se crean.
-    // TTLs más cortos: la latencia al cambiar de canción importa más que ahorrar
-    // unos MB de objetos WinRT (el GC ya los limpia periódicamente).
-    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(1);
+    // Los eventos son la vía normal e invalidan estas cachés al instante (cada handler
+    // incrementa su versión). Estos TTL son solo la red de seguridad para reproductores
+    // que no emiten eventos: cuanto más largos, menos objetos WinRT con la miniatura se
+    // crean y menos crece la memoria nativa. Un cambio real no espera al TTL.
+    private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(3);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
@@ -43,6 +43,11 @@ public sealed class SmtcMonitor : IDisposable
     private readonly Dictionary<string, PlaybackCache> _playback = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, TimelineCache> _timelines = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, bool> _coverDecisionCache = new(StringComparer.Ordinal);
+
+    // Una sesión ignorada se sigue leyendo en cada vuelta (hay que saber si desaparece),
+    // pero escribir su línea de log cada segundo solo genera I/O y ruido: se registra una
+    // vez por AUMID hasta que se reinicie el monitor.
+    private readonly HashSet<string> _ignoredLogged = new(StringComparer.OrdinalIgnoreCase);
 
     private IReadOnlyList<GlobalSystemMediaTransportControlsSession> _sessions =
         Array.Empty<GlobalSystemMediaTransportControlsSession>();
@@ -109,6 +114,18 @@ public sealed class SmtcMonitor : IDisposable
 
         _manager = null;
         _consecutiveFailures = 0;
+
+        // Estos dos servicios guardan una instantánea de las opciones. Al cambiar de perfil
+        // o de ajustes hay que recrearlos: si no, el nombre del reproductor y la decisión
+        // de leer la carátula siguen siendo los del perfil anterior hasta reiniciar.
+        _identity = new PlayerIdentityResolver(_options, _log);
+        _artwork = new ArtworkCache(_options, _log);
+
+        lock (_metadataGate)
+        {
+            _ignoredLogged.Clear();
+            _coverDecisionCache.Clear();
+        }
         ClearWatches();
         ResetSnapshots();
 
@@ -170,7 +187,6 @@ public sealed class SmtcMonitor : IDisposable
         }
 
         var sessions = GetSessionsCached();
-        _consecutiveFailures = 0;
         var currentAumid = GetCurrentSessionCached()?.SourceAppUserModelId ?? string.Empty;
 
         PruneWatches(sessions);
@@ -311,8 +327,24 @@ public sealed class SmtcMonitor : IDisposable
                 // YouTube never reaches the activity builder and behaves as "no music".
                 if (_options.IsIgnoredPlayer(aumid, identity.Name, identity.ExecutablePath, identity.FileName))
                 {
-                    _log.Debug(
-                        $"Session ignored by IgnoredPlayers: AUMID '{aumid}', player '{identity.Name}'.");
+                    var ignoredKey = aumid.Length > 0 ? aumid : identity.Name;
+                    bool firstTime;
+                    lock (_metadataGate)
+                    {
+                        if (_ignoredLogged.Count > 64)
+                        {
+                            _ignoredLogged.Clear();
+                        }
+
+                        firstTime = _ignoredLogged.Add(ignoredKey);
+                    }
+
+                    if (firstTime)
+                    {
+                        _log.Debug(
+                            $"Session ignored by IgnoredPlayers: AUMID '{aumid}', player '{identity.Name}'.");
+                    }
+
                     return null;
                 }
 
@@ -383,7 +415,7 @@ public sealed class SmtcMonitor : IDisposable
                     if (!_coverDecisionCache.ContainsKey(cacheKey))
                     {
                         var browserCoverTask = IsRealCoverThumbnailAsync(media?.Thumbnail, cancellationToken);
-                        var browserTimeout = Task.Delay(100, cancellationToken);
+                        var browserTimeout = Task.Delay(150, cancellationToken);
                         var browserCompleted = await Task.WhenAny(browserCoverTask, browserTimeout).ConfigureAwait(false);
                         if (browserCompleted == browserCoverTask)
                         {
@@ -426,7 +458,7 @@ public sealed class SmtcMonitor : IDisposable
                 if (thumbnail is not null)
                 {
                     var artworkTask = _artwork.GetAsync(thumbnail, mediaKey, cancellationToken);
-                    var timeoutTask = Task.Delay(180, cancellationToken);
+                    var timeoutTask = Task.Delay(250, cancellationToken);
                     var completed = await Task.WhenAny(artworkTask, timeoutTask).ConfigureAwait(false);
                     if (completed == artworkTask)
                     {
@@ -553,9 +585,13 @@ public sealed class SmtcMonitor : IDisposable
             }
         }
 
+        // El timeline debe pertenecer a la MISMA pista. Sin esta comprobación, al cambiar
+        // de canción se reutilizaban hasta 3 s la posición y la duración de la anterior
+        // (barra y tiempo total equivocados al empezar el tema nuevo).
         var valid = cache is not null
             && !force
             && cache.Version == version
+            && string.Equals(cache.MediaKey, mediaKey, StringComparison.Ordinal)
             && now - cache.At < TimelineTtl;
 
         if (!valid)
@@ -681,7 +717,7 @@ public sealed class SmtcMonitor : IDisposable
         // Un seek reescribe el instante del timeline. Si no cambió, es avance normal (o el
         // reproductor no informa de la posición en tiempo real): no se toca nada.
         if ((reportedLastUpdated - previous.LastUpdated).Duration()
-            < TimeSpan.FromMilliseconds(200))
+            < TimeSpan.FromMilliseconds(500))
         {
             return;
         }
@@ -701,9 +737,9 @@ public sealed class SmtcMonitor : IDisposable
 
         var delta = reportedPosition - expected;
 
-        if (delta.Duration() <= TimeSpan.FromSeconds(1)
+        if (delta.Duration() <= TimeSpan.FromSeconds(2)
             || delta.Duration() >= TimeSpan.FromMinutes(30)
-            || now - _lastSeekDetectedAt < TimeSpan.FromSeconds(1))
+            || now - _lastSeekDetectedAt < TimeSpan.FromSeconds(2))
         {
             return;
         }
@@ -853,7 +889,7 @@ public sealed class SmtcMonitor : IDisposable
         public string MediaKey { get; init; } = "";
     }
 
-    private static PlaybackState MapStatus(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status) => status switch
+    internal static PlaybackState MapStatus(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status) => status switch
     {
         GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing => PlaybackState.Playing,
         GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused => PlaybackState.Paused,
@@ -863,7 +899,7 @@ public sealed class SmtcMonitor : IDisposable
         _ => PlaybackState.Closed,
     };
 
-    private static string Clean(string? value)
+    internal static string Clean(string? value)
     {
         if (string.IsNullOrEmpty(value))
         {
@@ -1199,6 +1235,7 @@ public sealed class SmtcMonitor : IDisposable
         try
         {
             _sessions = manager.GetSessions();
+            _consecutiveFailures = 0;
             _sessionsSnapshotVersion = version;
             _sessionsReadAt = now;
             return _sessions;
@@ -1256,12 +1293,31 @@ public sealed class SmtcMonitor : IDisposable
         var now = DateTimeOffset.UtcNow;
         var version = Volatile.Read(ref _metadataVersion);
 
+        // La carátula/título se cachean, pero un cambio de pista puede no disparar el
+        // evento MediaPropertiesChanged en algunos reproductores. Para no quedarnos con
+        // los metadatos (y por tanto el mediaKey y la posición) de la canción anterior,
+        // se invalida la caché cuando la firma del timeline (duración + LastUpdated)
+        // cambió: eso indica una pista nueva aunque no haya llegado ningún evento.
+        GlobalSystemMediaTransportControlsSessionTimelineProperties? timeline = null;
+        try
+        {
+            timeline = session.GetTimelineProperties();
+        }
+        catch
+        {
+            timeline = null;
+        }
+        var currentDuration = timeline is null ? TimeSpan.Zero : (timeline.EndTime > timeline.StartTime ? timeline.EndTime - timeline.StartTime : TimeSpan.Zero);
+        var currentLastUpdated = timeline?.LastUpdatedTime ?? DateTimeOffset.MinValue;
+
         lock (_metadataGate)
         {
             if (_metadata.TryGetValue(aumid, out var cached)
                 && cached.Media is not null
                 && cached.Version == version
-                && now - cached.At < MetadataTtl)
+                && now - cached.At < MetadataTtl
+                && cached.TimelineDuration == currentDuration
+                && cached.TimelineLastUpdated == currentLastUpdated)
             {
                 return cached.Media;
             }
@@ -1271,7 +1327,15 @@ public sealed class SmtcMonitor : IDisposable
 
         lock (_metadataGate)
         {
-            _metadata[aumid] = new MetadataCache { Media = media, Version = version, At = now };
+            if (_metadata.Count > 64) _metadata.Clear();
+            _metadata[aumid] = new MetadataCache
+            {
+                Media = media,
+                Version = version,
+                At = now,
+                TimelineDuration = currentDuration,
+                TimelineLastUpdated = currentLastUpdated,
+            };
         }
 
         return media;
@@ -1292,5 +1356,9 @@ public sealed class SmtcMonitor : IDisposable
         public int Version { get; init; }
 
         public DateTimeOffset At { get; init; }
+
+        public TimeSpan TimelineDuration { get; init; }
+
+        public DateTimeOffset TimelineLastUpdated { get; init; }
     }
 }

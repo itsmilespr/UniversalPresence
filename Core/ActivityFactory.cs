@@ -54,7 +54,7 @@ public sealed class ActivityFactory
             return null;
         }
 
-        var artist = snapshot.Artist;
+        var artist = snapshot.DisplayArtist;
         var album = _options.ShowAlbum ? snapshot.Album : "";
         var player = snapshot.PlayerName;
 
@@ -294,6 +294,15 @@ public sealed class ActivityFactory
             return null;
         }
 
+        // Una portada propia (por canción o por reproductor) manda siempre. En modo
+        // ExternalUrl el nombre del archivo SMTC apuntaría a la carátula original y la
+        // portada elegida por el usuario no llegaba a mostrarse.
+        if (string.Equals(snapshot.ArtworkDecision, "override", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(snapshot.PublicArtworkUrl))
+        {
+            return snapshot.PublicArtworkUrl;
+        }
+
         // 1. The real SMTC cover, served from the user's public HTTPS host.
         if (artwork.UsesExternalUrl && snapshot.Artwork is not null)
         {
@@ -315,7 +324,7 @@ public sealed class ActivityFactory
     {
         var result = template;
         result = result.Replace("{title}", snapshot.Title ?? "", StringComparison.Ordinal);
-        result = result.Replace("{artist}", snapshot.Artist ?? "", StringComparison.Ordinal);
+        result = result.Replace("{artist}", snapshot.DisplayArtist ?? "", StringComparison.Ordinal);
         result = result.Replace("{album}", snapshot.Album ?? "", StringComparison.Ordinal);
         result = result.Replace("{player}", snapshot.PlayerName ?? "", StringComparison.Ordinal);
         // {status} se publica en el idioma configurado: "Reproduciendo" en vez de "Playing".

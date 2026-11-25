@@ -142,6 +142,14 @@ public sealed class ArtworkUploadService
             return previous;
         }
 
+        // Un fallo reciente (entrada con valor nulo) se respeta. Sin esto, una portada
+        // propia o una entrada de la cola lanzaba una subida completa en cada vuelta del
+        // bucle mientras el host estuviera caído (timeouts de hasta 30 s cada vez).
+        if (!force && _cache.TryGet(key, out var failed, out _) && string.IsNullOrWhiteSpace(failed))
+        {
+            return null;
+        }
+
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

@@ -210,7 +210,17 @@ public sealed class UpdateService : IDisposable
             return false;
         }
 
-        return LaunchRestore(target, _log);
+        if (!LaunchRestore(target, _log))
+        {
+            return false;
+        }
+
+        // Si se restaurara la versión anterior y quedara una actualización descargada,
+        // Dispose() también lanzaría apply-update.ps1 al cerrar: los dos scripts esperarían
+        // al mismo proceso y competirían por el .exe. Se descarta la descarga pendiente.
+        DeleteOlderDownloads(string.Empty);
+        _downloadedPath = null;
+        return true;
     }
 
     /// <summary>

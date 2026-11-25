@@ -13,6 +13,14 @@ internal static class Program
     {
         var cli = CliOptions.Parse(args);
 
+        // El ejecutable es WinExe (sin consola propia). Al invocarlo desde una terminal con
+        // cualquier modificador hay que engancharse a ella o --version, --status,
+        // --self-test y los comandos no imprimirían nada.
+        if (args.Length > 0)
+        {
+            ConsoleBootstrap.TryAttach();
+        }
+
         if (!string.IsNullOrWhiteSpace(cli.SendCommand))
         {
             try
@@ -27,11 +35,6 @@ internal static class Program
             }
 
             return 0;
-        }
-
-        if (cli.ConsoleMode || cli.ShowHelp)
-        {
-            ConsoleBootstrap.TryAttach();
         }
 
         if (cli.ShowHelp)
@@ -194,6 +197,14 @@ internal static class Program
     /// </summary>
     private static void WriteCommand(string command)
     {
+        // Si no hay ninguna instancia en marcha, el comando se quedaría en disco y se
+        // ejecutaría en el próximo arranque (por ejemplo, arrancar en pausa sin querer).
+        using var instance = new SingleInstance(@"Local\UniversalPresence.Tray");
+        if (instance.IsFirst)
+        {
+            throw new InvalidOperationException("Universal Presence is not running.");
+        }
+
         var dir = AppOptions.LocalDataDirectory;
         Directory.CreateDirectory(dir);
 

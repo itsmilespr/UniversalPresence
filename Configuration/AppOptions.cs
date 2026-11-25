@@ -324,7 +324,36 @@ public sealed class AppOptions
     public string ConfigPath { get; internal set; } = DefaultConfigPath;
 
     [JsonIgnore]
-    public string SecretsPath => Path.Combine(Path.GetDirectoryName(ConfigPath) ?? "", "secrets.dpapi.json");
+    public string SecretsPath
+    {
+        get
+        {
+            var configDirectory = Path.GetDirectoryName(ConfigPath) ?? "";
+            var defaultDirectory = Path.GetDirectoryName(DefaultConfigPath) ?? "";
+            var profilesDirectory = Path.Combine(defaultDirectory, "profiles");
+
+            // Las credenciales (Discord, Last.fm) son de la cuenta, no del perfil. Si cada
+            // archivo de perfiles guardara su propio secrets.dpapi.json, cambiar de perfil
+            // desconectaría la cuenta y perdería la sesión de Last.fm.
+            try
+            {
+                if (configDirectory.Length > 0
+                    && string.Equals(
+                        Path.GetFullPath(configDirectory),
+                        Path.GetFullPath(profilesDirectory),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    configDirectory = defaultDirectory;
+                }
+            }
+            catch
+            {
+                // Con una ruta inválida se usa la carpeta del propio archivo de configuración.
+            }
+
+            return Path.Combine(configDirectory, "secrets.dpapi.json");
+        }
+    }
 
     [JsonIgnore]
     public static string DefaultConfigPath { get; } = Path.Combine(
@@ -816,7 +845,7 @@ public sealed class AppOptions
         }
     }
 
-    private static void LoadSecrets(AppOptions options)
+    internal static void LoadSecrets(AppOptions options)
     {
         try
         {

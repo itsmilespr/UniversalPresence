@@ -135,6 +135,12 @@ disabled from the tray menu or with `"AutoUpdate": false`.
 - The settings window is only in Spanish for now.
 - The executable is not code-signed, so SmartScreen may warn on first run.
 
+## Roadmap
+
+- Translate the settings window (currently Spanish only).
+- Add unit tests for the pure logic in `Core/` and `Media/`.
+- Code-sign the published executable to avoid the SmartScreen warning.
+
 ## License
 
 [MIT](LICENSE). You can use, modify and redistribute it while keeping the copyright notice.
