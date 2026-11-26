@@ -780,7 +780,8 @@ public sealed class SmtcMonitor : IDisposable
         {
             "brave", "chrome", "chromium", "msedge", "edge", "firefox", "opera",
             "vivaldi", "arc", "safari", "waterfox", "librewolf", "tor", "yandex",
-            "duckduckgo", "whale", "naver"
+            "duckduckgo", "whale", "naver", "floorp", "pale moon", "palemoon",
+            "basilisk", "seamonkey", "mullvad", "zen browser", "zen.exe"
         };
 
         foreach (var kw in browserKeywords)

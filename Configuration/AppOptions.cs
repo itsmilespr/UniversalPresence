@@ -318,6 +318,14 @@ public sealed class AppOptions
         "firefox",
         "opera",
         "vivaldi",
+        "waterfox",
+        "librewolf",
+        "floorp",
+        "pale moon",
+        "palemoon",
+        "basilisk",
+        "zen browser",
+        "zen.exe",
     };
 
     /// <summary>Debug | Info | Warn | Error.</summary>

@@ -18,6 +18,6 @@
 
 ## Conventions
 
-- Identifiers and code comments in English; user-facing strings in Spanish (UI) or the
-  configured language (presence text).
+- Identifiers in English; code comments in Spanish (the repository is written that way);
+  user-facing strings in Spanish (UI) or the configured language (presence text).
 - No unrequested features, refactors, or new files beyond what the task requires.

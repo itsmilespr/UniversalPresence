@@ -4,6 +4,26 @@ All notable changes are documented here. Versions follow [SemVer](https://semver
 The full release history (including binaries and SHA-256) lives on the
 [GitHub Releases page](https://github.com/itsmilespr/UniversalPresence/releases).
 
+## [1.8.8] - 2026-11-26
+
+### Fixed
+- Firefox nunca se reconocía: Windows le asigna el hash del acceso directo
+  (`308046B0AF4A39CB`) como identificador de su sesión de medios, así que el nombre del
+  reproductor era ese hash y no se podía extraer ningún icono. La identidad se lee ahora
+  del registro (`Software\Classes\AppUserModelId`: nombre e `IconUri`) y, para Firefox y sus
+  derivados, de `Software\Mozilla\*\TaskBarIDs`, que apunta al `firefox.exe` real. Con el
+  ejecutable resuelto vuelven el nombre («Firefox»), su icono y la carátula del catálogo.
+- La lista `IgnoredPlayers` incluía `firefox` pero no lo filtraba: el identificador opaco
+  no contenía la palabra. Al resolver la identidad, la lista vuelve a funcionar como se
+  espera.
+- Firefox, Waterfox, LibreWolf, Floorp y compañía se reconocen como navegadores, así que su
+  miniatura se trata como la del resto de navegadores: se conserva si es una carátula real
+  (>= 200 px) y, si no, se busca la portada en el catálogo.
+
+### Changed
+- La lista de reproductores ignorados por defecto incluye los navegadores derivados de
+  Firefox, que antes se colaban como si fueran reproductores nativos.
+
 ## [1.8.7] - 2026-11-26
 
 ### Fixed

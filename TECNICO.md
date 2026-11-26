@@ -14,12 +14,12 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | Archivo | Responsabilidad |
 | --- | --- |
 | `Media/SmtcMonitor.cs` | `GlobalSystemMediaTransportControlsSessionManager.RequestAsync()`, `GetSessions()` y suscripción a `SessionsChanged`, `CurrentSessionChanged`, `MediaPropertiesChanged`, `PlaybackInfoChanged` y `TimelinePropertiesChanged`. **Ningún filtro por AUMID ni por ejecutable.** Elige la mejor sesión: `Playing` > `Paused` > `Stopped`, con bonus para la sesión actual y desempate por última actualización. |
-| `Media/PlayerIdentityResolver.cs` | AUMID → nombre legible: override del usuario → `AppInfo.GetFromAppUserModelId` → proceso real en ejecución → AUMID embellecido. También extrae el icono del `.exe` a 256 px con `PrivateExtractIcons`. |
+| `Media/PlayerIdentityResolver.cs` | AUMID → nombre legible: override del usuario → registro `Software\Classes\AppUserModelId` (`DisplayName`/`IconUri`, resueltos con `SHLoadIndirectString`) → `AppInfo.GetFromAppUserModelId` → Firefox por `Software\Mozilla\*\TaskBarIDs` → proceso real en ejecución → AUMID embellecido (un hash opaco se sustituye por el texto genérico). También extrae el icono del `.exe` a 256 px con `PrivateExtractIcons`. |
 | `Media/ArtworkCache.cs` | Lee el `Thumbnail` de SMTC, lo normaliza a 512–1024 px y lo guarda en disco con hash SHA-256. Memoriza por pista para no releer la imagen en cada vuelta. |
 | `Media/ArtworkLookupService.cs` | Busca una portada pública en **iTunes Search** y **Deezer** en paralelo, con caché de 6 h. |
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
 | `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
-| `Core/PresenceEngine.Runtime.cs` | Si la memoria privada supera 80 MB (comprobado cada 5 s) fuerza un GC de gen2 en segundo plano: las referencias WinRT solo se liberan ahí y el heap gestionado es de ~1–7 MB. Mantiene el pico en ~90–100 MB en vez de dejar que crezca hasta 200 MB. También detecta una app a pantalla completa para el modo juego. |
+| `Core/PresenceEngine.Runtime.cs` | Si la memoria privada supera 80 MB (comprobado cada 5 s) fuerza un GC de gen2 en segundo plano. No es un parche: con el bucle encendido el runtime no llega a gen2 por sí solo (medido: 8 vueltas y 6,8 MB asignados en 30 s con **0** recolecciones de gen2 y un heap vivo de 5 MB), así que las referencias WinRT no se liberan nunca; con el bucle apagado la app se queda plana en ~19 MB. Mantiene el pico en ~90–100 MB en vez de dejar que crezca sin fin. También detecta una app a pantalla completa para el modo juego. |
 | `Infrastructure/UpdateService.cs` | Consulta GitHub Releases (`/releases/latest` en estable, `/releases` filtrando pre-releases en beta), descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso y guarda el anterior como `.exe.bak`. `TryRestorePreviousVersion()` usa un segundo script para volver a ese `.bak`. |
 | `Infrastructure/UserIdle.cs` | `GetLastInputInfo` para los segundos sin teclado/ratón y `OpenInputDesktop` para detectar bloqueo (un fallo de apertura es pantalla segura). Con `ClearWhenIdle` el motor limpia la presencia y la republica al volver. |
 | `Infrastructure/ListeningHistory.cs` | Historial JSON Lines (`history.jsonl`) con título, artista, álbum, reproductor, fecha y duración. Agrega `Compute(días)` para el panel de estadísticas y exporta CSV. |
@@ -166,7 +166,7 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `Artwork.UploadUrl` | `""` | URL base del host propio de carátulas (SelfHosted). |
 | `Artwork.ExternalUrlBase` | `""` | Base HTTPS propia para servir las carátulas. |
 | `Artwork.FallbackAssetKey` | `""` | Asset de respaldo sin portada. |
-| `IgnoredPlayers` | navegadores | Lista **negra** por subcadena sobre AUMID, proceso y nombre. |
+| `IgnoredPlayers` | navegadores (Firefox, Chrome, Edge, Brave, Opera, Vivaldi y derivados de Firefox) | Lista **negra** por subcadena sobre AUMID, proceso y nombre. Firefox publica un AUMID opaco (el hash del acceso directo), así que solo se puede ignorar si antes se resuelve su ejecutable: por eso la resolución de identidad es lo que hace efectiva la lista. |
 | `PlayerNameOverrides` | `{}` | `{"AUMID": "Nombre"}`. Solo cambia el nombre, nunca filtra. |
 | `TreatStoppedAsPaused` | `false` | Para integraciones que reportan `Stopped` al pausar. |
 | `ClearWhenIdle` | `false` | Oculta la presencia si el PC está inactivo o bloqueado. |

@@ -19,9 +19,11 @@ public sealed record PlayerIdentity(string Name, string AppUserModelId, string? 
 /// This is purely cosmetic: an unknown id never causes the session to be ignored.
 /// Resolution order:
 ///   1. explicit user override (config)
-///   2. Windows app registration (AppInfo.GetFromAppUserModelId)
-///   3. a running process whose name matches the AUMID / executable
-///   4. the AUMID itself, lightly prettified
+///   2. Windows app registration (Software\Classes\AppUserModelId: nombre e IconUri)
+///   3. Windows app registration through AppInfo (solo el nombre)
+///   4. Firefox: el hash del acceso directo se rastrea hasta firefox.exe (TaskBarIDs)
+///   5. a running process whose name matches the AUMID / executable
+///   6. the AUMID itself, lightly prettified
 /// </summary>
 public sealed class PlayerIdentityResolver
 {
@@ -349,6 +351,13 @@ public sealed class PlayerIdentityResolver
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetClassLongPtrW")]
     private static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
 
+    [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SHLoadIndirectString(
+        string source,
+        System.Text.StringBuilder buffer,
+        int bufferLength,
+        IntPtr reserved);
+
     public PlayerIdentity Resolve(string? appUserModelId)
     {
         var aumid = (appUserModelId ?? string.Empty).Trim();
@@ -365,7 +374,7 @@ public sealed class PlayerIdentityResolver
 
         lock (_gate)
         {
-            var ttl = identity.Source is "appinfo" or "override" ? AuthoritativeTtl : GuessedTtl;
+            var ttl = identity.Source is "appinfo" or "override" or "registry" ? AuthoritativeTtl : GuessedTtl;
             _cache[aumid] = new CacheEntry(identity, DateTimeOffset.UtcNow + ttl);
         }
 
@@ -388,9 +397,18 @@ public sealed class PlayerIdentityResolver
             return new PlayerIdentity(overridden!, aumid, null, "override");
         }
 
-        if (TryGetRegisteredAppName(aumid, out var registered))
+        if (TryGetRegisteredAppIdentity(aumid, out var registeredIdentity))
         {
-            return new PlayerIdentity(registered, aumid, null, "appinfo");
+            return registeredIdentity;
+        }
+
+        if (TryResolveFirefoxExecutable(aumid, out var firefoxPath))
+        {
+            return new PlayerIdentity(
+                FileDescription(firefoxPath) ?? "Firefox",
+                aumid,
+                firefoxPath,
+                "firefox");
         }
 
         if (TryFindProcess(aumid, out var processName, out var executablePath) && !string.IsNullOrWhiteSpace(processName))
@@ -401,24 +419,183 @@ public sealed class PlayerIdentityResolver
         return new PlayerIdentity(Prettify(aumid, text.Player), aumid, null, "aumid");
     }
 
-    private static bool TryGetRegisteredAppName(string aumid, out string name)
+    /// <summary>
+    /// Identidad que Windows tiene registrada para el AUMID.
+    ///
+    /// Algunos reproductores publican un identificador opaco (el hash del acceso directo,
+    /// como Firefox con «308046B0AF4A39CB»): no hay forma de deducir de ahí ni el nombre ni
+    /// el icono. Windows sí los guarda en HKCU\Software\Classes\AppUserModelId\&lt;id&gt;,
+    /// así que se leen de ahí antes de intentar nada más.
+    /// </summary>
+    private static bool TryGetRegisteredAppIdentity(string aumid, out PlayerIdentity identity)
     {
-        name = "";
+        identity = default!;
+
+        using var key = OpenAppUserModelIdKey(aumid);
+        if (key is null)
+        {
+            return false;
+        }
+
+        var name = ResolveIndirectString(key.GetValue("DisplayName") as string);
+        var executablePath = ParseIconUri(key.GetValue("IconUri") as string);
+
+        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(executablePath))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = FileDescription(executablePath);
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        identity = new PlayerIdentity(name!, aumid, executablePath, "registry");
+        return true;
+    }
+
+    private static Microsoft.Win32.RegistryKey? OpenAppUserModelIdKey(string aumid)
+    {
+        if (string.IsNullOrWhiteSpace(aumid))
+        {
+            return null;
+        }
+
+        foreach (var root in new[] { Microsoft.Win32.Registry.CurrentUser, Microsoft.Win32.Registry.LocalMachine })
+        {
+            try
+            {
+                var key = root.OpenSubKey($@"Software\Classes\AppUserModelId\{aumid}");
+                if (key is not null)
+                {
+                    return key;
+                }
+            }
+            catch
+            {
+                // Un AUMID con caracteres raros o sin permisos: se sigue con el siguiente.
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// El registro guarda el nombre y el icono como cadenas indirectas («@{...}»).
+    /// SHLoadIndirectString las convierte en el texto y la ruta reales.
+    /// </summary>
+    private static string? ResolveIndirectString(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        value = value.Trim();
+
+        if (!value.StartsWith("@", StringComparison.Ordinal))
+        {
+            return value;
+        }
 
         try
         {
-            var appInfo = Windows.ApplicationModel.AppInfo.GetFromAppUserModelId(aumid);
-            var displayName = appInfo?.DisplayInfo?.DisplayName;
-
-            if (!string.IsNullOrWhiteSpace(displayName))
+            var buffer = new System.Text.StringBuilder(1024);
+            if (SHLoadIndirectString(value, buffer, buffer.Capacity, IntPtr.Zero) == 0)
             {
-                name = displayName.Trim();
-                return true;
+                var resolved = buffer.ToString().Trim();
+                return resolved.Length == 0 ? null : resolved;
             }
         }
         catch
         {
-            // Unpackaged player or unregistered AUMID: fall through to the process lookup.
+            // Sin shlwapi no queda nada legible: se ignora esta vía.
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// IconUri puede ser una ruta («C:\...\firefox.exe») o una referencia con índice
+    /// («C:\...\app.exe,-123»). Devuelve la ruta del ejecutable si existe en disco.
+    /// </summary>
+    private static string? ParseIconUri(string? value)
+    {
+        var resolved = ResolveIndirectString(value);
+        if (string.IsNullOrWhiteSpace(resolved))
+        {
+            return null;
+        }
+
+        var comma = resolved.LastIndexOf(',');
+        if (comma > 2 && int.TryParse(resolved[(comma + 1)..].Trim(), out _))
+        {
+            resolved = resolved[..comma].Trim();
+        }
+
+        resolved = resolved.Trim('"', ' ');
+        return File.Exists(resolved) ? resolved : null;
+    }
+
+    /// <summary>
+    /// Firefox y sus derivados no registran el AUMID: el acceso directo del instalador les da
+    /// un hash que Windows asigna a la ventana oculta de SMTC. El propio instalador apunta la
+    /// ruta de instalación a ese hash en Software\Mozilla\*\TaskBarIDs, así que de ahí sale el
+    /// ejecutable real (y con él el nombre y el icono).
+    /// </summary>
+    private static bool TryResolveFirefoxExecutable(string aumid, out string? executablePath)
+    {
+        executablePath = null;
+
+        if (string.IsNullOrWhiteSpace(aumid))
+        {
+            return false;
+        }
+
+        foreach (var root in new[] { Microsoft.Win32.Registry.CurrentUser, Microsoft.Win32.Registry.LocalMachine })
+        {
+            try
+            {
+                using var mozilla = root.OpenSubKey(@"Software\Mozilla");
+                if (mozilla is null)
+                {
+                    continue;
+                }
+
+                foreach (var vendor in mozilla.GetSubKeyNames())
+                {
+                    using var taskBarIds = mozilla.OpenSubKey($@"{vendor}\TaskBarIDs");
+                    if (taskBarIds is null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var installPath in taskBarIds.GetValueNames())
+                    {
+                        if (!string.Equals(taskBarIds.GetValue(installPath) as string, aumid,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var candidate = Path.Combine(installPath, "firefox.exe");
+                        if (File.Exists(candidate))
+                        {
+                            executablePath = candidate;
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Clave ausente o sin permisos: se prueba el siguiente árbol.
+            }
         }
 
         return false;
@@ -640,6 +817,15 @@ public sealed class PlayerIdentityResolver
             value = value["Microsoft.".Length..];
         }
 
+        // Un hash opaco (el AUMID de un acceso directo, como el de Firefox) no dice nada al
+        // usuario: antes de eso se prefiere el texto genérico.
+        if (OpaqueAppId.IsMatch(value))
+        {
+            return fallback;
+        }
+
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
+
+    private static readonly Regex OpaqueAppId = new("^[0-9A-Fa-f]{16}$", RegexOptions.Compiled);
 }
