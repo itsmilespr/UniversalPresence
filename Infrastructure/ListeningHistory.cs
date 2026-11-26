@@ -122,7 +122,9 @@ public sealed class ListeningHistoryService
                 }
                 catch { }
 
-                if (at == DateTimeOffset.MinValue || at >= cutoff)
+                // Una línea sin fecha legible no se puede situar en el tiempo: se descarta,
+                // porque si se conservara para siempre el recorte nunca reduciría el archivo.
+                if (at != DateTimeOffset.MinValue && at >= cutoff)
                 {
                     kept.Add(line);
                 }
@@ -385,7 +387,7 @@ public sealed class ListeningHistoryService
             : 0;
 
     private static string Csv(string value) =>
-        $"\"{value.Replace("\"", "\"\"") }\"";
+        $"\"{value.Replace("\"", "\"\"")}\"";
 
     public sealed record HistoryEntry(string At, string Title, string Artist, string Album, string Player, long DurationMs = 0);
 

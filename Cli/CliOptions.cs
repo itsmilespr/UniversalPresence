@@ -1,12 +1,12 @@
 namespace UniversalPresence.Cli;
 
 /// <summary>
-/// Command line switches.
-///   (none)            tray mode, no window, only a notification-area icon
+/// Command line switches (see <see cref="PrintHelp"/> for the text shown to the user).
+///   (none)              tray mode, no window, only a notification-area icon
 ///   --test / --console  headless diagnostics loop, prints every detected session
 ///   --list              one-shot dump of every SMTC session, then exit
-    ///   --settings          tray mode, opening the settings window on start
-    ///   --dry-run           never talk to Discord
+///   --settings          tray mode, opening the settings window on start
+///   --dry-run           never talk to Discord
 /// </summary>
 public sealed class CliOptions
 {

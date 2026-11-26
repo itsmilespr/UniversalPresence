@@ -2,6 +2,7 @@ bin/
 obj/
 .dotnet/
 .tools/
+.dumps/
 publish/
 publish_test/
 .vs/

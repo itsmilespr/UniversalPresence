@@ -19,6 +19,14 @@ public sealed class TrackArtistLookupService
     private static readonly TimeSpan MinimumInterval = TimeSpan.FromMilliseconds(400);
     private static readonly HttpClient Http = CreateClient();
 
+    /// <summary>Cuánto se deja de consultar Deezer tras un error de cuota.</summary>
+    private static readonly TimeSpan QuotaPause = TimeSpan.FromMinutes(5);
+
+    // Deezer contesta 200 con {"error":{"code":4}} al superar su cuota. Es un fallo
+    // temporal, no «la pista no tiene artistas»: se cachea como fallo y se deja pasar
+    // unos minutos antes de volver a preguntar.
+    private DateTimeOffset _pausedUntil = DateTimeOffset.MinValue;
+
     private readonly Log? _log;
     private readonly HttpClient _http;
     private readonly ConcurrentDictionary<string, string?> _cache = new(StringComparer.Ordinal);
@@ -50,6 +58,11 @@ public sealed class TrackArtistLookupService
             if (_cache.TryGetValue(key, out cached))
             {
                 return cached;
+            }
+
+            if (DateTimeOffset.UtcNow < _pausedUntil)
+            {
+                return null;
             }
 
             var wait = _lastRequestAt + MinimumInterval - DateTimeOffset.UtcNow;
@@ -103,6 +116,8 @@ public sealed class TrackArtistLookupService
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
+
+        ThrowIfQuotaExceeded(document.RootElement);
 
         if (!document.RootElement.TryGetProperty("data", out var results)
             || results.ValueKind != JsonValueKind.Array)
@@ -172,6 +187,8 @@ public sealed class TrackArtistLookupService
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
+
+        ThrowIfQuotaExceeded(document.RootElement);
 
         if (!document.RootElement.TryGetProperty("contributors", out var contributors)
             || contributors.ValueKind != JsonValueKind.Array)
@@ -277,6 +294,24 @@ public sealed class TrackArtistLookupService
         var normalized = TextMatch.Normalize(value);
         return normalized.Length > 0
             && GenericArtists.Contains(normalized, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Si Deezer superó la cuota, aparca el catálogo unos minutos y lanza, para que
+    /// <see cref="ResolveAsync"/> no lo confunda con «esta pista no tiene artistas» ni lo
+    /// guarde en la caché.
+    /// </summary>
+    private void ThrowIfQuotaExceeded(JsonElement root)
+    {
+        if (!DeezerQuota.IsExceeded(root))
+        {
+            return;
+        }
+
+        _pausedUntil = DateTimeOffset.UtcNow + QuotaPause;
+        _log?.Warn($"Deezer alcanzó su cuota de peticiones; se deja de consultar {QuotaPause.TotalMinutes:0} minutos.");
+
+        throw new HttpRequestException("Deezer alcanzó su cuota de peticiones al buscar artistas.");
     }
 
     private static HttpClient CreateClient()

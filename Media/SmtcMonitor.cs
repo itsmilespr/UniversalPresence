@@ -31,7 +31,8 @@ public sealed class SmtcMonitor : IDisposable
     // que no emiten eventos: cuanto más largos, menos objetos WinRT con la miniatura se
     // crean y menos crece la memoria nativa. Un cambio real no espera al TTL.
     private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan StreamMetadataTtl = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(2);
 
     private readonly object _watchGate = new();
@@ -932,9 +933,18 @@ public sealed class SmtcMonitor : IDisposable
     {
         lock (_watchGate)
         {
-            if (_watched.ContainsKey(aumid))
+            if (_watched.TryGetValue(aumid, out var current))
             {
-                return;
+                if (ReferenceEquals(current, session))
+                {
+                    return;
+                }
+
+                // El reproductor creó otra sesión para el mismo AUMID (cambio de pista,
+                // reinicio del player o vuelta de suspensión). La anterior ya no emite
+                // eventos y, si se deja aquí, retiene su objeto COM con la miniatura
+                // incluida para siempre: el recolector no la ve, porque sigue referenciada.
+                ReleaseWatch(aumid, current);
             }
 
             try
@@ -950,6 +960,22 @@ public sealed class SmtcMonitor : IDisposable
                 _log.Debug($"No se pudieron suscribir los eventos de '{aumid}': {ex.Message}");
             }
         }
+    }
+
+    private void ReleaseWatch(string aumid, GlobalSystemMediaTransportControlsSession session)
+    {
+        try
+        {
+            session.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
+            session.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
+            session.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
+        }
+        catch
+        {
+            // Una sesión ya cerrada puede rechazar la baja; da igual, se suelta igualmente.
+        }
+
+        _watched.Remove(aumid);
     }
 
     private void PruneWatches(IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions)
@@ -976,18 +1002,7 @@ public sealed class SmtcMonitor : IDisposable
         {
             foreach (var pair in _watched.Where(pair => !live.Contains(pair.Key)).ToList())
             {
-                try
-                {
-                    pair.Value.MediaPropertiesChanged -= OnSessionMediaPropertiesChanged;
-                    pair.Value.PlaybackInfoChanged -= OnSessionPlaybackInfoChanged;
-                    pair.Value.TimelinePropertiesChanged -= OnSessionTimelinePropertiesChanged;
-                }
-                catch
-                {
-                    // ignore
-                }
-
-                _watched.Remove(pair.Key);
+                ReleaseWatch(pair.Key, pair.Value);
             }
         }
 
@@ -1305,27 +1320,34 @@ public sealed class SmtcMonitor : IDisposable
         var now = DateTimeOffset.UtcNow;
         var version = Volatile.Read(ref _metadataVersion);
 
-        // La carátula/título se cachean, pero un cambio de pista puede no disparar el
-        // evento MediaPropertiesChanged en algunos reproductores. Para no quedarnos con
-        // los metadatos de la canción anterior se invalida la caché cuando cambia la
-        // firma del timeline (duración + LastUpdated) o cuando la posición vuelve atrás
-        // más de dos segundos (repetición de una pista de la misma duración).
+        // La carátula, los títulos y la miniatura se cachean. Un cambio de pista llega por
+        // el evento MediaPropertiesChanged o, si el reproductor no lo emite, por estas
+        // señales: duración distinta, posición que retrocede (repetición de una pista de
+        // la misma duración) o el TTL de seguridad.
+        //
+        // Importante: NO se invalida al cambiar LastUpdatedTime. Los reproductores la
+        // reescriben en cada avance, así que ese criterio invalidaba la caché en casi
+        // todas las vueltas del sondeo y volvía a crear el objeto WinRT con la miniatura
+        // (~230 KB nativos) cada 1,5 s. Con un heap gestionado de 2 MB esos objetos no
+        // llegaban a gen2 y la memoria privada subía ~10 MB por minuto.
         var currentDuration = timeline is null
             ? TimeSpan.Zero
             : timeline.EndTime > timeline.StartTime
                 ? timeline.EndTime - timeline.StartTime
                 : TimeSpan.Zero;
-        var currentLastUpdated = timeline?.LastUpdatedTime ?? DateTimeOffset.MinValue;
         var currentPosition = timeline?.Position ?? TimeSpan.Zero;
+
+        // En un stream (sin duración) la posición tampoco distingue pistas, así que se
+        // revalida más a menudo: es lo que refresca el título de la radio si no hay evento.
+        var safetyTtl = currentDuration > TimeSpan.Zero ? MetadataTtl : StreamMetadataTtl;
 
         lock (_metadataGate)
         {
             if (_metadata.TryGetValue(aumid, out var cached)
                 && cached.Media is not null
                 && cached.Version == version
-                && now - cached.At < MetadataTtl
+                && now - cached.At < safetyTtl
                 && cached.TimelineDuration == currentDuration
-                && cached.TimelineLastUpdated == currentLastUpdated
                 && !(timeline is not null
                     && currentPosition < cached.TimelinePosition - TimeSpan.FromSeconds(2)))
             {
@@ -1344,7 +1366,6 @@ public sealed class SmtcMonitor : IDisposable
                 Version = version,
                 At = now,
                 TimelineDuration = currentDuration,
-                TimelineLastUpdated = currentLastUpdated,
                 TimelinePosition = currentPosition,
             };
         }
@@ -1369,8 +1390,6 @@ public sealed class SmtcMonitor : IDisposable
         public DateTimeOffset At { get; init; }
 
         public TimeSpan TimelineDuration { get; init; }
-
-        public DateTimeOffset TimelineLastUpdated { get; init; }
 
         /// <summary>Posición leída al guardar; si retrocede, la pista se reinició.</summary>
         public TimeSpan TimelinePosition { get; init; }

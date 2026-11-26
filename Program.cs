@@ -11,15 +11,16 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        var cli = CliOptions.Parse(args);
-
         // El ejecutable es WinExe (sin consola propia). Al invocarlo desde una terminal con
         // cualquier modificador hay que engancharse a ella o --version, --status,
-        // --self-test y los comandos no imprimirían nada.
+        // --self-test y los comandos no imprimirían nada. Se hace antes de leer los
+        // argumentos porque el propio analizador avisa de los que no reconoce.
         if (args.Length > 0)
         {
             ConsoleBootstrap.TryAttach();
         }
+
+        var cli = CliOptions.Parse(args);
 
         if (!string.IsNullOrWhiteSpace(cli.SendCommand))
         {

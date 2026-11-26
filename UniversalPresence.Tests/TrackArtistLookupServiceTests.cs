@@ -107,6 +107,43 @@ public class TrackArtistLookupServiceTests
         Assert.Equal("Post Malone, Young Thug", recovered);
     }
 
+    [Fact]
+    public async Task DoesNotCacheADeezerQuotaErrorAsMissingArtists()
+    {
+        var handler = new QuotaHandler();
+        using var http = new HttpClient(handler);
+        var service = new TrackArtistLookupService(null!, http);
+
+        var first = await service.ResolveAsync("Goodbyes", "Post Malone", CancellationToken.None);
+        var second = await service.ResolveAsync("Goodbyes", "Post Malone", CancellationToken.None);
+
+        Assert.Null(first);
+        Assert.Null(second);
+
+        // La cuota se detecta y se deja de llamar: no se insiste en cada pista.
+        Assert.Equal(1, handler.Requests);
+    }
+
+    private sealed class QuotaHandler : HttpMessageHandler
+    {
+        public int Requests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Requests++;
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"error":{"type":"Exception","message":"Quota limit exceeded","code":4}}""",
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            });
+        }
+    }
+
     private sealed class FlakyHandler : HttpMessageHandler
     {
         private int _searches;

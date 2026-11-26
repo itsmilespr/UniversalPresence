@@ -4,6 +4,27 @@ All notable changes are documented here. Versions follow [SemVer](https://semver
 The full release history (including binaries and SHA-256) lives on the
 [GitHub Releases page](https://github.com/itsmilespr/UniversalPresence/releases).
 
+## [1.8.7] - 2026-11-26
+
+### Fixed
+- Windows rewrites the media session position timestamp on every update, so the metadata
+  cache (cover included) was being thrown away almost once per second and the 200 KB
+  thumbnail was read again from the player each time. Only a real track change, a duration
+  change, a backwards jump or a safety TTL invalidates it now.
+- A player that recreates its media session (track change, restart, resume from sleep) left
+  the previous session object subscribed and retained, and the new one was never picked up.
+  The old one is released and the new one watched, so events keep arriving.
+- Deezer's quota answer is recognised in one place for both covers and guest artists: a
+  paused catalogue is no longer cached as "this track has no artist".
+- Listening history no longer keeps lines whose date cannot be parsed, which made the file
+  impossible to trim.
+
+### Changed
+- Last.fm scrobbles follow the service rule (half the track or 4 minutes) and no longer
+  count a skip as a full play; the "now playing" update is still sent on start.
+- The engine is split into partial files by topic (publishing, artwork, track state,
+  history, runtime) to make each part readable on its own.
+
 ## [1.8.6] - 2026-11-26
 
 ### Fixed

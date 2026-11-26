@@ -19,18 +19,22 @@ Para instalar y usar la app, empieza por el [README](README.md).
 | `Media/ArtworkLookupService.cs` | Busca una portada pública en **iTunes Search** y **Deezer** en paralelo, con caché de 6 h. |
 | `Media/ArtworkUploadService.cs` | Sube la carátula extraída a **Litterbox** (72 h, sin clave) o **Imgur** (Client-ID) y guarda la URL. |
 | `Media/ProgramIconAssetService.cs` | Sube el icono del reproductor una sola vez por AUMID, cachea la URL y la renueva con la misma política (revalidar a 24 h, renovar a 60 h). |
-| `Core/PresenceEngine.cs` | Si la memoria privada supera 80 MB (comprobado cada 5 s) fuerza un GC de gen2 en segundo plano: las referencias WinRT solo se liberan ahí y el heap gestionado es de ~1–7 MB. Mantiene el pico en ~90–100 MB en vez de dejar que crezca hasta 200 MB. |
+| `Core/PresenceEngine.Runtime.cs` | Si la memoria privada supera 80 MB (comprobado cada 5 s) fuerza un GC de gen2 en segundo plano: las referencias WinRT solo se liberan ahí y el heap gestionado es de ~1–7 MB. Mantiene el pico en ~90–100 MB en vez de dejar que crezca hasta 200 MB. También detecta una app a pantalla completa para el modo juego. |
 | `Infrastructure/UpdateService.cs` | Consulta GitHub Releases (`/releases/latest` en estable, `/releases` filtrando pre-releases en beta), descarga el `.exe` verificando tamaño y SHA-256 y lo instala al cerrar mediante un script de PowerShell que espera al proceso y guarda el anterior como `.exe.bak`. `TryRestorePreviousVersion()` usa un segundo script para volver a ese `.bak`. |
 | `Infrastructure/UserIdle.cs` | `GetLastInputInfo` para los segundos sin teclado/ratón y `OpenInputDesktop` para detectar bloqueo (un fallo de apertura es pantalla segura). Con `ClearWhenIdle` el motor limpia la presencia y la republica al volver. |
 | `Infrastructure/ListeningHistory.cs` | Historial JSON Lines (`history.jsonl`) con título, artista, álbum, reproductor, fecha y duración. Agrega `Compute(días)` para el panel de estadísticas y exporta CSV. |
 | `Localization/UiStrings.cs` | Diccionario por idioma para las cadenas nuevas (controles, estadísticas, ausencia, canal, portadas propias, Last.fm y asistente) en en/es/pt/fr/de/it/zh, con caída a inglés. |
 | `Tray/StatsForm.cs` | Panel de estadísticas: tarjetas de totales, top artistas/canciones, últimos 7 días, filtro por periodo y exportación CSV. |
 | `Tray/FirstRunForm.cs` | Asistente inicial: idioma, arranque con Windows, avisos, historial, overlay, estado de Discord y explicación de portadas/privacidad. |
-| `Media/SmtcMonitor.cs` | Cachea sesiones, sesión actual, metadatos, playback y timeline (eventos + TTL de 30 s/6 s) para no crear objetos WinRT cada segundo. La posición se proyecta desde `LastUpdated`, así que la barra sigue exacta. |
+| `Media/SmtcMonitor.cs` | Cachea sesiones, sesión actual, metadatos, playback y timeline (eventos + TTL de 10 s/15 s/2 s) para no crear objetos WinRT cada segundo. La posición se proyecta desde `LastUpdated`, así que la barra sigue exacta. |
 | `Localization/PresenceText.cs` | Textos de la presencia en 18 idiomas (inglés por defecto): estado, álbum y botones. Se elige con `Language` en `config.json`. |
 | `Discord/DiscordIpcClient.cs` | Named pipe `discord-ipc-0..9`, handshake `{v:1, client_id}`, frames de 8 bytes (op + longitud), `PING`→`PONG`, `SET_ACTIVITY`. |
 | `Discord/DiscordPresenceService.cs` | Conexión perezosa, reconexión con backoff (1 s → 30 s), ventana de 5 actualizaciones / 20 s y limpieza de la actividad al salir. |
-| `Core/PresenceEngine.cs` | Bucle de lectura y publicación, publicador independiente, contador de repeticiones y estado para la bandeja. |
+| `Core/PresenceEngine.cs` | Ciclo de vida del motor y estado compartido: campos, arranque/parada y el bucle principal (`LoopAsync`), que lee la sesión, aplica portada/artista/icono y encola la actividad. Es el archivo por el que conviene empezar. |
+| `Core/PresenceEngine.Publishing.cs` | Cola de publicación (solo hay una actividad pendiente: la última gana), prioridades para no gastar el cupo de Discord, anclas de la barra y resincronización automática. |
+| `Core/PresenceEngine.Artwork.cs` | Portadas e iconos: subida al host público, caché y revalidación, búsqueda en catálogo, portada propia del usuario y cola de reintentos. |
+| `Core/PresenceEngine.TrackState.cs` | Identidad de pista, seeks, reanudación, contador «×N», hueco de metadatos al cambiar de canción y artistas invitados de Deezer. |
+| `Core/PresenceEngine.History.cs` | Historial de escucha (`history.jsonl`) y Last.fm: cada pista se registra una sola vez y se scrobblea la anterior. |
 | `Core/ActivityFactory.cs` | Construye el payload: título, artista, álbum, portada, icono, contador y timestamps. |
 | `Tray/TrayApplicationContext.cs` | Icono de bandeja sin ventana principal, menú y globos de estado. |
 | `Tray/WindowsAutostart.cs` | Entrada `UniversalPresence` en `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. |
@@ -140,7 +144,7 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | Clave | Por defecto | Descripción |
 | --- | --- | --- |
 | `DiscordClientId` | `1558323929766953042` | Application ID incluido. Solo hace falta cambiarlo si usas tu propia aplicación. |
-| `PollIntervalMs` | `1000` | Sondeo de seguridad de SMTC (los eventos se atienden al instante). |
+| `PollIntervalMs` | `1500` |
 | `MinUpdateIntervalMs` | `4000` | Separación mínima entre actualizaciones que no cambian lo visible. |
 | `HeartbeatSeconds` | `60` | Re-publicación periódica para mantener viva la conexión. `0` la desactiva. |
 | `ShowProgress` | `true` | Envía `timestamps` para que Discord muestre la barra. |
@@ -167,7 +171,7 @@ primer arranque y se aplica en caliente al guardar desde la ventana de configura
 | `TreatStoppedAsPaused` | `false` | Para integraciones que reportan `Stopped` al pausar. |
 | `ClearWhenIdle` | `false` | Oculta la presencia si el PC está inactivo o bloqueado. |
 | `IdleSeconds` | `600` | Segundos sin actividad para considerar ausencia (30–86400). |
-| `ResyncProgressDrift` | `true` | Red de seguridad: reenvía los timestamps si la posición real se aleja más de 1,5 s de la barra publicada (como mucho cada 3 s). Los seeks/arrastres de la barra se detectan por el evento de timeline de SMTC y se reenvían al instante. |
+| `ResyncProgressDrift` | `true` | Red de seguridad: reenvía los timestamps si la posición real se aleja más de 2,5 s de la barra publicada (como mucho cada 5 s). Los seeks/arrastres de la barra se detectan por el evento de timeline de SMTC y se reenvían al instante. |
 | `ResyncEverySeconds` | `5` | Cada cuántos segundos se compara la barra con la posición real y se reenvía si se desvió más de 400 ms. `0` desactiva la comprobación. |
 | `UpdateChannel` | `"stable"` | `stable` o `beta` (incluye pre-releases). |
 | `CoverOverrides` | `{}` | `{"Spotify.exe": "https://…"}` o ruta de archivo: portada propia por app. |

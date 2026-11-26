@@ -50,6 +50,14 @@ public sealed class ArtworkLookupService
     private static readonly SemaphoreSlim CatalogGate = new(1, 1);
     private static DateTimeOffset _lastCatalogRequest = DateTimeOffset.MinValue;
 
+    /// <summary>Cuánto se deja de consultar Deezer tras un error de cuota.</summary>
+    private static readonly TimeSpan DeezerQuotaPause = TimeSpan.FromMinutes(5);
+
+    // Deezer contesta 200 con {"error":{"code":4}} cuando se supera su cuota. Eso no es
+    // «esta canción no tiene portada»: es un fallo temporal, así que se aparca el catálogo
+    // unos minutos y no se guarda el negativo en caché.
+    private static DateTimeOffset _deezerPausedUntil = DateTimeOffset.MinValue;
+
     public ArtworkLookupService(AppOptions options, Log log, string cacheFilePath)
     {
         _options = options;
@@ -103,6 +111,14 @@ public sealed class ArtworkLookupService
 
             var url = await SearchAsync(title, artist, album, cancellationToken).ConfigureAwait(false);
             _lastRequestAt = DateTimeOffset.UtcNow;
+
+            if (url is null && DateTimeOffset.UtcNow < _deezerPausedUntil)
+            {
+                // La búsqueda quedó incompleta por la cuota de Deezer: guardar un «sin
+                // portada» dejaría la canción sin carátula cuando el catálogo vuelva.
+                _log.Debug($"Búsqueda de portada incompleta por cuota de Deezer para «{title}».");
+                return null;
+            }
 
             _cache.Set(key, url);
             return url;
@@ -466,6 +482,12 @@ public sealed class ArtworkLookupService
     {
         try
         {
+            if (DateTimeOffset.UtcNow < _deezerPausedUntil)
+            {
+                _log.Debug("Deezer está en pausa por cuota; se omite la búsqueda.");
+                return null;
+            }
+
             var term = Uri.EscapeDataString($"{artist} {title}".Trim());
             var uri = $"https://api.deezer.com/search?q={term}&limit=10";
 
@@ -479,6 +501,12 @@ public sealed class ArtworkLookupService
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
+
+            if (DeezerQuota.IsExceeded(document.RootElement))
+            {
+                PauseDeezer();
+                return null;
+            }
 
             if (!document.RootElement.TryGetProperty("data", out var results)
                 || results.ValueKind != JsonValueKind.Array)
@@ -592,6 +620,14 @@ public sealed class ArtworkLookupService
 
         _log.Debug($"Sin portada pública para '{artist} - {title}'.");
         return null;
+    }
+
+    private void PauseDeezer()
+    {
+        _deezerPausedUntil = DateTimeOffset.UtcNow + DeezerQuotaPause;
+        _log.Warn(
+            $"Deezer alcanzó su cuota de peticiones; se deja de consultar " +
+            $"{DeezerQuotaPause.TotalMinutes:0} minutos.");
     }
 
     private static HttpClient CreateClient()

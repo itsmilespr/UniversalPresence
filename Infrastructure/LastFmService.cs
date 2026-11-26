@@ -17,6 +17,12 @@ public sealed class LastFmService
     private const string ApiRoot = "https://ws.audioscrobbler.com/2.0/";
     private const string AuthRoot = "https://www.last.fm/api/auth/";
 
+    /// <summary>Last.fm ignora las pistas de 30 s o menos.</summary>
+    private static readonly TimeSpan MinimumTrackDuration = TimeSpan.FromSeconds(30);
+
+    /// <summary>Nunca hace falta escuchar más de 4 minutos para que un scrobble cuente.</summary>
+    private static readonly TimeSpan MaximumRequiredPlay = TimeSpan.FromMinutes(4);
+
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     private readonly AppOptions _options;
@@ -146,18 +152,61 @@ public sealed class LastFmService
         return body is not null && !body.Contains("\"error\"", StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Regla oficial de scrobble: la pista debe durar más de 30 s y haberse escuchado al
+    /// menos la mitad de su duración o 4 minutos, lo que llegue antes. Un scrobble que no
+    /// la cumple no debe enviarse: Last.fm lo descarta igualmente, y enviarlo solo gasta
+    /// cuota y ensucia el log.
+    /// </summary>
+    internal static bool MeetsScrobbleRule(TimeSpan duration, TimeSpan listened)
+    {
+        if (listened <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        if (duration > TimeSpan.Zero && duration <= MinimumTrackDuration)
+        {
+            return false;
+        }
+
+        // Sin duración (algunos reproductores no la publican) no se puede calcular la
+        // mitad, así que se exige el tope de 4 minutos.
+        var required = duration > TimeSpan.Zero
+            ? TimeSpan.FromTicks(duration.Ticks / 2)
+            : MaximumRequiredPlay;
+
+        return listened >= (required < MaximumRequiredPlay ? required : MaximumRequiredPlay);
+    }
+
+    /// <summary>
+    /// Envía un scrobble. <paramref name="startedAt"/> es cuándo empezó a sonar la pista,
+    /// <paramref name="duration"/> su duración y <paramref name="listened"/> el tiempo que
+    /// realmente se ha reproducido; si no cumple la regla de Last.fm, no se envía nada.
+    /// </summary>
     public async Task<bool> ScrobbleAsync(
         string title,
         string artist,
         string album,
         DateTimeOffset startedAt,
-        CancellationToken cancellationToken,
-        long durationSeconds = 0)
+        TimeSpan duration,
+        TimeSpan listened,
+        CancellationToken cancellationToken)
     {
         if (!IsEnabled || string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(artist))
         {
             return false;
         }
+
+        if (!MeetsScrobbleRule(duration, listened))
+        {
+            _log.Debug(
+                $"Last.fm: no se scrobbela «{artist} - {title}» " +
+                $"({listened.TotalSeconds:0} s de {(long)duration.TotalSeconds} s).");
+            return false;
+        }
+
+        var durationSeconds = (long)duration.TotalSeconds;
 
         var parameters = new Dictionary<string, string>
         {

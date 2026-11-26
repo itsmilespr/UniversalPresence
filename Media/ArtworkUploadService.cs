@@ -41,6 +41,10 @@ public sealed class ArtworkUploadService
     private const int MaxQueueEntries = 40;
     private const int MaxRetriesPerEntry = 12;
 
+    // URLs comprobadas en esta ejecución. Es solo un atajo para no repetir el HEAD: si
+    // una sesión muy larga lo llena, se vacía y como mucho se revalida algo dos veces.
+    private const int MaxRevalidatedUrls = 512;
+
     // La URL de cada carátula se guarda en disco: la segunda vez que suena una canción ya
     // no hay que volver a subirla, ni siquiera tras reiniciar la aplicación. El TTL es menor
     // que la vida real del archivo en Litterbox (72 h) y la antigüedad se conserva para
@@ -117,7 +121,15 @@ public sealed class ArtworkUploadService
     public void InvalidateFailures() => _cache.ClearFailures();
 
     /// <summary>Marca una URL como comprobada en esta ejecución (no se repite el HEAD).</summary>
-    public void MarkRevalidated(string url) => _revalidated[url] = 0;
+    public void MarkRevalidated(string url)
+    {
+        if (_revalidated.Count >= MaxRevalidatedUrls)
+        {
+            _revalidated.Clear();
+        }
+
+        _revalidated[url] = 0;
+    }
 
     public bool IsRevalidated(string url) => _revalidated.ContainsKey(url);
 
