@@ -14,6 +14,11 @@ public sealed class ListeningHistoryService
     private readonly int _retentionDays;
     private readonly int _maxEntries;
 
+    // El recorte es O(n) sobre todo el archivo, así que se lleva la cuenta de las líneas
+    // en memoria y solo se recorta cuando de verdad hace falta.
+    private int _lineCount = -1;
+    private DateOnly _lastTrimDay = DateOnly.MinValue;
+
     public ListeningHistoryService(int retentionDays = 90, int maxEntries = 5000, string? path = null)
     {
         _path = string.IsNullOrWhiteSpace(path)
@@ -45,13 +50,52 @@ public sealed class ListeningHistoryService
             });
             lock (_gate)
             {
-                TrimIfNeeded(at);
+                if (_lineCount < 0)
+                {
+                    _lineCount = CountLines();
+                }
+
+                MaybeTrim(at);
                 File.AppendAllText(_path, line + Environment.NewLine);
+                _lineCount++;
             }
         }
         catch
         {
             // Historial nunca debe tumbar la app.
+        }
+    }
+
+    /// <summary>
+    /// Recorta solo cuando el archivo supera el máximo con holgura o cuando cambia el día
+    /// (retención por antigüedad). Antes se leía y parseaba el archivo completo en cada
+    /// cambio de canción, en el hilo del bucle de presencia.
+    /// </summary>
+    private void MaybeTrim(DateTimeOffset now)
+    {
+        var day = DateOnly.FromDateTime(now.LocalDateTime);
+        var slack = Math.Max(10, _maxEntries / 10);
+        var tooMany = _maxEntries > 0 && _lineCount > _maxEntries + slack;
+        var newDay = _retentionDays > 0 && day != _lastTrimDay;
+
+        if (!tooMany && !newDay)
+        {
+            return;
+        }
+
+        _lastTrimDay = day;
+        TrimIfNeeded(now);
+    }
+
+    private int CountLines()
+    {
+        try
+        {
+            return File.Exists(_path) ? File.ReadLines(_path).Count() : 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -91,8 +135,12 @@ public sealed class ListeningHistoryService
 
             if (kept.Count != lines.Count)
             {
-                File.WriteAllLines(_path, kept);
+                AtomicFile.WriteAllText(
+                    _path,
+                    string.Join(Environment.NewLine, kept) + Environment.NewLine);
             }
+
+            _lineCount = kept.Count;
         }
         catch
         {

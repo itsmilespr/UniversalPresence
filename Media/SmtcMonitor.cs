@@ -31,9 +31,8 @@ public sealed class SmtcMonitor : IDisposable
     // que no emiten eventos: cuanto más largos, menos objetos WinRT con la miniatura se
     // crean y menos crece la memoria nativa. Un cambio real no espera al TTL.
     private static readonly TimeSpan SnapshotTtl = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MetadataTtl = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan PlaybackTtl = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan TimelineTtl = TimeSpan.FromSeconds(3);
 
     private readonly object _watchGate = new();
     private readonly object _metadataGate = new();
@@ -348,7 +347,21 @@ public sealed class SmtcMonitor : IDisposable
                     return null;
                 }
 
-                var media = await GetMediaPropertiesAsync(session, aumid, cancellationToken).ConfigureAwait(false);
+                // El timeline se lee UNA vez por sesión y vuelta: su firma invalida los
+                // metadatos cuando cambia la pista y su posición alimenta la barra, sin
+                // crear un segundo objeto WinRT en la caché de metadatos.
+                GlobalSystemMediaTransportControlsSessionTimelineProperties? timeline = null;
+                try
+                {
+                    timeline = session.GetTimelineProperties();
+                }
+                catch
+                {
+                    timeline = null;
+                }
+
+                var media = await GetMediaPropertiesAsync(session, aumid, timeline, cancellationToken)
+                    .ConfigureAwait(false);
 
                 // Los navegadores (Brave, Chrome, Edge, Firefox…) exponen como miniatura
                 // de SMTC su propio icono o el favicon del sitio, no la portada real del
@@ -386,7 +399,7 @@ public sealed class SmtcMonitor : IDisposable
                 var capturedAt = DateTimeOffset.UtcNow;
                 var mediaKey = $"{aumid}|{title}|{artist}|{album}";
                 var (position, duration, lastUpdated) = ReadTimelineCached(
-                    session, aumid, status, projectPosition, force: !projectPosition, mediaKey);
+                    aumid, status, projectPosition, mediaKey, timeline);
                 // Los navegadores exponen como miniatura SMTC su propio icono o el favicon del
                 // sitio, no la portada real. Se ignora esa miniatura por defecto, pero si la
                 // imagen es lo bastante grande (>= 200 px) se asume que es una portada real
@@ -566,12 +579,11 @@ public sealed class SmtcMonitor : IDisposable
     /// crear un objeto WinRT por segundo (un seek real dispara el evento y refresca ya).
     /// </summary>
     private (TimeSpan Position, TimeSpan Duration, DateTimeOffset LastUpdated) ReadTimelineCached(
-        GlobalSystemMediaTransportControlsSession session,
         string aumid,
         PlaybackState status,
         bool projectPosition,
-        bool force,
-        string mediaKey)
+        string mediaKey,
+        GlobalSystemMediaTransportControlsSessionTimelineProperties? timeline)
     {
         var now = DateTimeOffset.UtcNow;
         var version = Volatile.Read(ref _timelineVersion);
@@ -585,81 +597,80 @@ public sealed class SmtcMonitor : IDisposable
             }
         }
 
-        // El timeline debe pertenecer a la MISMA pista. Sin esta comprobación, al cambiar
-        // de canción se reutilizaban hasta 3 s la posición y la duración de la anterior
-        // (barra y tiempo total equivocados al empezar el tema nuevo).
-        var valid = cache is not null
-            && !force
-            && cache.Version == version
-            && string.Equals(cache.MediaKey, mediaKey, StringComparison.Ordinal)
-            && now - cache.At < TimelineTtl;
+        var previous = cache;
 
-        if (!valid)
+        if (timeline is null)
         {
-            var previous = cache;
-
-            try
-            {
-                var timeline = session.GetTimelineProperties();
-                if (timeline is null)
-                {
-                    return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
-                }
-
-                var duration = timeline.EndTime > timeline.StartTime
-                    ? timeline.EndTime - timeline.StartTime
-                    : TimeSpan.Zero;
-
-                if (duration < TimeSpan.Zero)
-                {
-                    duration = TimeSpan.Zero;
-                }
-
-                cache = new TimelineCache
-                {
-                    Position = timeline.Position,
-                    Duration = duration,
-                    LastUpdated = timeline.LastUpdatedTime,
-                    Version = version,
-                    At = now,
-                    MediaKey = mediaKey,
-                };
-
-                // Solo se compara con la lectura anterior de la MISMA pista: un cambio de
-                // canción no es un seek (y además ya cambia la clave de actividad).
-                if (previous is not null
-                    && string.Equals(previous.MediaKey, mediaKey, StringComparison.Ordinal))
-                {
-                    DetectSeek(
-                        previous,
-                        timeline.Position,
-                        timeline.LastUpdatedTime,
-                        status,
-                        now);
-                }
-
-                if (aumid.Length > 0)
-                {
-                    lock (_metadataGate)
-                    {
-                        _timelines[aumid] = cache;
-                    }
-                }
-
-                // Diagnóstico para reproductores que reportan timelines anómalos
-                // (p. ej. Mornye/media_kit): se registra la lectura cruda para poder
-                // correlacionarla con la barra de Discord.
-                if (timeline.LastUpdatedTime == DateTimeOffset.MinValue
-                    || timeline.LastUpdatedTime > now.AddSeconds(1))
-                {
-                    _log.Debug(
-                        $"Timeline crudo '{aumid}': status={status} position={timeline.Position} " +
-                        $"duration={duration} lastUpdated={timeline.LastUpdatedTime:O} now={now:O}");
-                }
-            }
-            catch
+            // Una lectura fallida (o un timeline nulo) no puede publicar 0:00: se mantiene
+            // la última posición conocida de la MISMA pista, proyectada, en lugar de
+            // reiniciar la barra y forzar un envío inútil a Discord.
+            if (previous is null
+                || !string.Equals(previous.MediaKey, mediaKey, StringComparison.Ordinal))
             {
                 return (TimeSpan.Zero, TimeSpan.Zero, DateTimeOffset.MinValue);
+            }
+
+            cache = new TimelineCache
+            {
+                Position = previous.Position,
+                Duration = previous.Duration,
+                LastUpdated = previous.LastUpdated,
+                Version = version,
+                At = now,
+                MediaKey = mediaKey,
+            };
+        }
+        else
+        {
+            var duration = timeline.EndTime > timeline.StartTime
+                ? timeline.EndTime - timeline.StartTime
+                : TimeSpan.Zero;
+
+            if (duration < TimeSpan.Zero)
+            {
+                duration = TimeSpan.Zero;
+            }
+
+            cache = new TimelineCache
+            {
+                Position = timeline.Position,
+                Duration = duration,
+                LastUpdated = timeline.LastUpdatedTime,
+                Version = version,
+                At = now,
+                MediaKey = mediaKey,
+            };
+
+            // Solo se compara con la lectura anterior de la MISMA pista: un cambio de
+            // canción no es un seek (y además ya cambia la clave de actividad).
+            if (previous is not null
+                && string.Equals(previous.MediaKey, mediaKey, StringComparison.Ordinal))
+            {
+                DetectSeek(
+                    previous,
+                    timeline.Position,
+                    timeline.LastUpdatedTime,
+                    status,
+                    now);
+            }
+
+            if (aumid.Length > 0)
+            {
+                lock (_metadataGate)
+                {
+                    _timelines[aumid] = cache;
+                }
+            }
+
+            // Diagnóstico para reproductores que reportan timelines anómalos
+            // (p. ej. Mornye/media_kit): se registra la lectura cruda para poder
+            // correlacionarla con la barra de Discord.
+            if (timeline.LastUpdatedTime == DateTimeOffset.MinValue
+                || timeline.LastUpdatedTime > now.AddSeconds(1))
+            {
+                _log.Debug(
+                    $"Timeline crudo '{aumid}': status={status} position={timeline.Position} " +
+                    $"duration={duration} lastUpdated={timeline.LastUpdatedTime:O} now={now:O}");
             }
         }
 
@@ -1283,6 +1294,7 @@ public sealed class SmtcMonitor : IDisposable
     private async Task<GlobalSystemMediaTransportControlsSessionMediaProperties?> GetMediaPropertiesAsync(
         GlobalSystemMediaTransportControlsSession session,
         string aumid,
+        GlobalSystemMediaTransportControlsSessionTimelineProperties? timeline,
         CancellationToken cancellationToken)
     {
         if (aumid.Length == 0)
@@ -1295,20 +1307,16 @@ public sealed class SmtcMonitor : IDisposable
 
         // La carátula/título se cachean, pero un cambio de pista puede no disparar el
         // evento MediaPropertiesChanged en algunos reproductores. Para no quedarnos con
-        // los metadatos (y por tanto el mediaKey y la posición) de la canción anterior,
-        // se invalida la caché cuando la firma del timeline (duración + LastUpdated)
-        // cambió: eso indica una pista nueva aunque no haya llegado ningún evento.
-        GlobalSystemMediaTransportControlsSessionTimelineProperties? timeline = null;
-        try
-        {
-            timeline = session.GetTimelineProperties();
-        }
-        catch
-        {
-            timeline = null;
-        }
-        var currentDuration = timeline is null ? TimeSpan.Zero : (timeline.EndTime > timeline.StartTime ? timeline.EndTime - timeline.StartTime : TimeSpan.Zero);
+        // los metadatos de la canción anterior se invalida la caché cuando cambia la
+        // firma del timeline (duración + LastUpdated) o cuando la posición vuelve atrás
+        // más de dos segundos (repetición de una pista de la misma duración).
+        var currentDuration = timeline is null
+            ? TimeSpan.Zero
+            : timeline.EndTime > timeline.StartTime
+                ? timeline.EndTime - timeline.StartTime
+                : TimeSpan.Zero;
         var currentLastUpdated = timeline?.LastUpdatedTime ?? DateTimeOffset.MinValue;
+        var currentPosition = timeline?.Position ?? TimeSpan.Zero;
 
         lock (_metadataGate)
         {
@@ -1317,7 +1325,9 @@ public sealed class SmtcMonitor : IDisposable
                 && cached.Version == version
                 && now - cached.At < MetadataTtl
                 && cached.TimelineDuration == currentDuration
-                && cached.TimelineLastUpdated == currentLastUpdated)
+                && cached.TimelineLastUpdated == currentLastUpdated
+                && !(timeline is not null
+                    && currentPosition < cached.TimelinePosition - TimeSpan.FromSeconds(2)))
             {
                 return cached.Media;
             }
@@ -1335,6 +1345,7 @@ public sealed class SmtcMonitor : IDisposable
                 At = now,
                 TimelineDuration = currentDuration,
                 TimelineLastUpdated = currentLastUpdated,
+                TimelinePosition = currentPosition,
             };
         }
 
@@ -1360,5 +1371,8 @@ public sealed class SmtcMonitor : IDisposable
         public TimeSpan TimelineDuration { get; init; }
 
         public DateTimeOffset TimelineLastUpdated { get; init; }
+
+        /// <summary>Posición leída al guardar; si retrocede, la pista se reinició.</summary>
+        public TimeSpan TimelinePosition { get; init; }
     }
 }

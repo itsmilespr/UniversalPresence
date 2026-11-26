@@ -477,7 +477,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
                             if (!string.Equals(_desiredKey, IdleKey, StringComparison.Ordinal))
                             {
-                                RequestPublish(null, IdleKey, urgent: true);
+                                RequestPublish(null, IdleKey, PublishPriority.Content);
                             }
 
                             await _signal.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken)
@@ -508,7 +508,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
                         if (!string.Equals(_desiredKey, IdleKey, StringComparison.Ordinal))
                         {
-                            RequestPublish(null, IdleKey, urgent: true);
+                            RequestPublish(null, IdleKey, PublishPriority.Content);
                         }
 
                         await _signal.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
@@ -682,9 +682,12 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             $"end {activity?.Timestamps?.End}.");
                     }
 
+                    // La portada y el icono forman parte de la clave: cuando su URL llega
+                    // o se renueva es un cambio visible, no un simple ajuste de la barra.
                     var key = activity is null
                         ? IdleKey
-                        : $"{snapshot!.ActivityKey}|{activity.Details}|{activity.State}";
+                        : $"{snapshot!.ActivityKey}|{activity.Details}|{activity.State}" +
+                          $"|{snapshot.PublicArtworkUrl}|{snapshot.ProgramIconUrl}";
 
                     // Resincronización automática: si esta pista no es la que Discord tiene
                     // confirmada, no hay nada en la cola y aun así no se ha publicado en
@@ -824,6 +827,16 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                             $"(start {activity?.Timestamps?.Start}).");
                     }
 
+                    // Prioridad: el contenido visible (pista, portada, reproductor) puede
+                    // usar todo el cupo de Discord; los reenvíos de solo-progreso reservan
+                    // siempre un par de huecos para que el siguiente cambio de canción no
+                    // se quede esperando detrás de ellos.
+                    var priority = !string.Equals(key, _publishedKey, StringComparison.Ordinal)
+                        ? PublishPriority.Content
+                        : forceRepublish || driftResync || jumped
+                            ? PublishPriority.Progress
+                            : PublishPriority.Background;
+
                     if (shouldPublish)
                     {
                         // Encolar nunca bloquea: si Discord está en su límite, la actividad
@@ -832,7 +845,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                         RequestPublish(
                             activity,
                             key,
-                            urgent,
+                            priority,
                             snapshot?.Position ?? TimeSpan.Zero,
                             snapshot?.CapturedAt ?? DateTimeOffset.UtcNow,
                             snapshot is null ? "" : TrackKey(snapshot));
@@ -1282,14 +1295,37 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             return false;
         }
 
-        var now = DateTimeOffset.UtcNow;
-        var expected = snapshot.Status == PlaybackState.Playing
-            ? _publishedPosition + (now - _publishedAnchorAt)
-            : _publishedPosition;
-        var difference = (snapshot.Position - expected).Duration();
+                return IsProgressDesync(
+            _publishedPosition,
+            _publishedAnchorAt,
+            snapshot.Position,
+            DateTimeOffset.UtcNow,
+            snapshot.Status,
+            ProgressResyncThreshold);
+    }
 
-        return difference > TimeSpan.FromMilliseconds(1000)
-            && difference < TimeSpan.FromMinutes(30);
+    /// <summary>Desviación mínima de la barra que merece un reenvío de timestamps.</summary>
+    internal static readonly TimeSpan ProgressResyncThreshold = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// True cuando la posición real se separó de la que Discord está dibujando. La barra se
+    /// dibuja desde un par absoluto start/end, así que una desviación mayor que el umbral
+    /// significa que el reloj publicado ya no coincide con el audio.
+    /// </summary>
+    internal static bool IsProgressDesync(
+        TimeSpan publishedPosition,
+        DateTimeOffset anchorAt,
+        TimeSpan actualPosition,
+        DateTimeOffset now,
+        PlaybackState status,
+        TimeSpan threshold)
+    {
+        var expected = status == PlaybackState.Playing
+            ? publishedPosition + (now - anchorAt)
+            : publishedPosition;
+        var difference = (actualPosition - expected).Duration();
+
+        return difference > threshold && difference < TimeSpan.FromMinutes(30);
     }
 
     private void MaybeKickUploadQueue()
@@ -1631,9 +1667,9 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
         return wasPaused
             && current.Status == PlaybackState.Playing
             && string.Equals(previous.AppUserModelId, current.AppUserModelId, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(previous.Title, current.Title, StringComparison.Ordinal)
-            && (previous.Duration <= TimeSpan.Zero
-                || current.Duration <= TimeSpan.Zero
+                        && string.Equals(previous.Title, current.Title, StringComparison.Ordinal)
+            && (previous.Duration <= TimeSpan.Zero
+                || current.Duration <= TimeSpan.Zero
                 || (previous.Duration - current.Duration).Duration() <= TimeSpan.FromSeconds(2));
     }
 
@@ -1684,13 +1720,20 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
     private void OnDiscordStateChanged()
     {
-        // Force a republish after a reconnect: lo que Discord muestra ya no es de fiar.
-        _desiredKey = null;
+        // Lo que Discord muestra ya no es de fiar: se olvida la confirmación. Pero no se
+        // invalida la actividad encolada si hay un envío en curso (al conectar): eso
+        // provocaba un reenvío duplicado de la misma canción justo después de publicarla.
         _publishedKey = null;
         _publishedTrackKey = null;
         _publishedAtUnixMs = 0;
         _hasPublishAnchor = false;
         _unconfirmedKey = null;
+
+        if (_discord.State != DiscordConnectionState.Connected || IsPublishIdle())
+        {
+            _desiredKey = null;
+        }
+
         _signal.Set();
         Updated?.Invoke();
     }
@@ -1750,7 +1793,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private void RequestPublish(
         DiscordActivity? activity,
         string key,
-        bool urgent,
+        PublishPriority priority,
         TimeSpan position = default,
         DateTimeOffset capturedAt = default,
         string trackKey = "")
@@ -1764,7 +1807,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
 
         lock (_publishGate)
         {
-            _pendingPublish = new PublishRequest(activity, key, urgent, DateTimeOffset.UtcNow, position, capturedAt, trackKey);
+            _pendingPublish = new PublishRequest(activity, key, priority, DateTimeOffset.UtcNow, position, capturedAt, trackKey);
             inflight = _inflightPublish;
         }
 
@@ -1826,7 +1869,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
                 try
                 {
                     published = await _discord
-                        .PublishAsync(request.Activity, cancellationToken, request.Urgent, supersede.Token)
+                        .PublishAsync(request.Activity, cancellationToken, request.Priority, supersede.Token)
                         .ConfigureAwait(false);
                 }
                 finally
@@ -1895,7 +1938,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     /// <summary>
     /// Detecta el instante en que un reproductor cambia de pista pero todavía no ha
     /// publicado título/artista (durante unos milisegundos la sesión queda vacía).
-    /// Se mantiene la presencia anterior un máximo de 2 s para no enseñar un hueco.
+    /// Se mantiene la presencia anterior un máximo de 1 s para no enseñar un hueco.
     /// </summary>
     private bool IsTransientMetadataGap(MediaSnapshot? current, MediaSnapshot? previous)
     {
@@ -1920,7 +1963,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
             _metadataGapSince = DateTimeOffset.UtcNow;
         }
 
-        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromMilliseconds(300);
+        return DateTimeOffset.UtcNow - _metadataGapSince < TimeSpan.FromMilliseconds(1000);
     }
 
     /// <summary>
@@ -2058,7 +2101,7 @@ public sealed class PresenceEngine : IAsyncDisposable, IDisposable
     private sealed record PublishRequest(
         DiscordActivity? Activity,
         string Key,
-        bool Urgent,
+        PublishPriority Priority,
         DateTimeOffset QueuedAt,
         TimeSpan Position,
         DateTimeOffset CapturedAt,

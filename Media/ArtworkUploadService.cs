@@ -49,6 +49,10 @@ public sealed class ArtworkUploadService
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentDictionary<string, byte> _revalidated = new(StringComparer.Ordinal);
 
+    // Subidas de la pista que se está mostrando ahora mismo. La cola de reintentos se
+    // aparta mientras haya alguna: la carátula visible nunca espera detrás de una antigua.
+    private int _foregroundUploads;
+
     public ArtworkUploadService(AppOptions options, Log log)
     {
         _options = options;
@@ -127,7 +131,8 @@ public sealed class ArtworkUploadService
     public async Task<string?> UploadAsync(
         ArtworkInfo artwork,
         CancellationToken cancellationToken,
-        bool force = false)
+        bool force = false,
+        bool background = false)
     {
         if (!_options.Artwork.UsesUpload)
         {
@@ -150,7 +155,25 @@ public sealed class ArtworkUploadService
             return null;
         }
 
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!background)
+        {
+            Interlocked.Increment(ref _foregroundUploads);
+        }
+
+        try
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (!background)
+            {
+                Interlocked.Decrement(ref _foregroundUploads);
+            }
+
+            throw;
+        }
+
         try
         {
             if (!force)
@@ -202,6 +225,11 @@ public sealed class ArtworkUploadService
         finally
         {
             _gate.Release();
+
+            if (!background)
+            {
+                Interlocked.Decrement(ref _foregroundUploads);
+            }
         }
     }
 
@@ -532,6 +560,14 @@ public sealed class ArtworkUploadService
                 continue;
             }
 
+            if (Volatile.Read(ref _foregroundUploads) > 0)
+            {
+                // La portada de la pista actual manda: se corta la pasada y el resto queda
+                // en la cola para el siguiente intento.
+                _log.Debug("Drenaje de portadas pausado: hay una subida de la pista actual en curso.");
+                break;
+            }
+
             if (uploaded >= 5)
             {
                 remaining.Add(entry);
@@ -543,7 +579,7 @@ public sealed class ArtworkUploadService
 
             try
             {
-                var url = await UploadAsync(artwork, cancellationToken).ConfigureAwait(false);
+                var url = await UploadAsync(artwork, cancellationToken, background: true).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(url))
                 {
                     uploaded++;
@@ -725,7 +761,7 @@ public sealed class ArtworkUploadService
             return;
         }
 
-        File.WriteAllText(_queuePath, JsonSerializer.Serialize(entries, QueueJson));
+        AtomicFile.WriteAllText(_queuePath, JsonSerializer.Serialize(entries, QueueJson));
     }
 
     private static readonly JsonSerializerOptions QueueJson = new() { WriteIndented = true };

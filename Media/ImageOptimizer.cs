@@ -69,11 +69,23 @@ public static class ImageOptimizer
             }
 
             var jpeg = Encode(target, ImageFormat.Jpeg);
-            var png = Encode(target, ImageFormat.Png);
 
-            // El PNG solo gana si de verdad pesa menos (portadas planas, capturas).
-            var usePng = png.Length < jpeg.Length;
-            var bytes = usePng ? png : jpeg;
+            // El PNG solo se plantea cuando la fuente puede tener transparencia: en fotos
+            // (el caso normal) se evita una segunda codificación y la portada llega antes
+            // al host público.
+            byte[] bytes;
+            var usePng = false;
+
+            if (Image.IsAlphaPixelFormat(source.PixelFormat))
+            {
+                var png = Encode(target, ImageFormat.Png);
+                usePng = png.Length < jpeg.Length;
+                bytes = usePng ? png : jpeg;
+            }
+            else
+            {
+                bytes = jpeg;
+            }
 
             if (bytes.Length >= input.Length && scale >= 1.0)
             {

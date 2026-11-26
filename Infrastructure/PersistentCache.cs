@@ -183,19 +183,15 @@ public sealed class PersistentCache
     {
         try
         {
-            var directory = Path.GetDirectoryName(_path);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
             var payload = new CacheFile
             {
                 Version = CacheVersion,
                 Entries = _entries.ToDictionary(pair => pair.Key, pair => pair.Value),
             };
 
-            File.WriteAllText(_path, JsonSerializer.Serialize(payload));
+            // Escritura atómica: un cierre a mitad de guardado no puede dejar la caché
+            // truncada (se perderían todas las URLs de portada ya subidas).
+            AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(payload));
         }
         catch (Exception ex)
         {

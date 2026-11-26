@@ -4,6 +4,23 @@ using UniversalPresence.Infrastructure;
 namespace UniversalPresence.Discord;
 
 /// <summary>
+/// Qué cambia con este SET_ACTIVITY. Decide cuánto cupo del límite de Discord puede
+/// gastar y con qué separación mínima, para que la información visible (canción, portada,
+/// reproductor) nunca espere detrás de una resincronización de la barra.
+/// </summary>
+public enum PublishPriority
+{
+    /// <summary>Latido y reanclaje de pausa: solo mantienen viva la actividad.</summary>
+    Background = 0,
+
+    /// <summary>Solo timestamps (seek, deriva, resincronización periódica).</summary>
+    Progress = 1,
+
+    /// <summary>Cambió algo visible: pista, artista, portada, reproductor o estado.</summary>
+    Content = 2,
+}
+
+/// <summary>
 /// Keeps a Discord IPC connection alive: connects lazily, retries with exponential
 /// backoff when Discord is closed, and throttles SET_ACTIVITY to Discord's limits.
 /// </summary>
@@ -55,7 +72,7 @@ public sealed class DiscordPresenceService : IAsyncDisposable
     public async Task<bool> PublishAsync(
         DiscordActivity? activity,
         CancellationToken cancellationToken,
-        bool urgent = false,
+        PublishPriority priority = PublishPriority.Background,
         CancellationToken superseded = default)
     {
         if (!IsConfigured)
@@ -69,20 +86,28 @@ public sealed class DiscordPresenceService : IAsyncDisposable
         {
             if (activity is null)
             {
-                if (_client is { IsConnected: true })
+                // Sin conexión no hay nada que limpiar: Discord borra la actividad al
+                // cerrarse el pipe. Con conexión, un fallo sí debe reintentarse (antes se
+                // daba por bueno y la canción anterior se quedaba fija).
+                if (_client is not { IsConnected: true })
                 {
-                    try
-                    {
-                        await _client.SetActivityAsync(null, cancellationToken).ConfigureAwait(false);
-                        RecordSend();
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _log.Debug($"No se pudo limpiar la actividad: {ex.Message}");
-                    }
+                    return true;
                 }
 
-                return true;
+                try
+                {
+                    await _client.SetActivityAsync(null, cancellationToken).ConfigureAwait(false);
+                    RecordSend();
+                    return true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.Warn($"No se pudo limpiar la actividad: {ex.Message}");
+                    await DropClientAsync().ConfigureAwait(false);
+                    SetState(DiscordConnectionState.Disconnected);
+                    ScheduleRetry();
+                    return false;
+                }
             }
 
             if (!await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false))
@@ -101,7 +126,7 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
             try
             {
-                await WaitForSendSlotAsync(urgent, slotCancellation.Token).ConfigureAwait(false);
+                await WaitForSendSlotAsync(priority, slotCancellation.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -146,13 +171,13 @@ public sealed class DiscordPresenceService : IAsyncDisposable
 
     /// <summary>
     /// Espera hasta que Discord acepte otra actualización: ventana deslizante de 20 s con
-    /// 5 huecos. Las actualizaciones urgentes no esperan el hueco mínimo configurado y
-    /// pueden usar el último hueco; las de fondo reservan uno para el próximo cambio de
-    /// canción, así que el título nuevo sale de inmediato.
+    /// 5 huecos. El contenido visible puede usar los cinco; el progreso y los envíos de
+    /// fondo dejan siempre un par libres, así que un cambio de canción nunca se queda
+    /// esperando detrás de una resincronización de la barra.
     /// </summary>
-    private async Task WaitForSendSlotAsync(bool urgent, CancellationToken cancellationToken)
+    private async Task WaitForSendSlotAsync(PublishPriority priority, CancellationToken cancellationToken)
     {
-        var minimumGap = TimeSpan.FromMilliseconds(_options.MinUpdateIntervalMs);
+        var policy = PolicyFor(priority, _options.MinUpdateIntervalMs);
 
         while (true)
         {
@@ -167,22 +192,15 @@ public sealed class DiscordPresenceService : IAsyncDisposable
                     _recentSends.Dequeue();
                 }
 
-                // Los envíos de fondo (latido y reanclaje de pausa) dejan siempre un
-                // hueco libre en la ventana: un cambio de canción nunca espera detrás de
-                // ellos. Si la ventana está llena, el de fondo espera a que caduque el
-                // más antiguo (y una pista nueva lo cancela al instante).
-                var limit = urgent ? MaxSendsPerWindow : Math.Max(1, MaxSendsPerWindow - 1);
-
-                if (_recentSends.Count >= limit)
+                if (_recentSends.Count >= policy.Limit)
                 {
                     wait = _recentSends.Peek() + SendWindow - now;
                 }
-                else if (!urgent
-                    && minimumGap > TimeSpan.Zero
+                else if (policy.Gap > TimeSpan.Zero
                     && _lastSentAt != DateTimeOffset.MinValue
-                    && now - _lastSentAt < minimumGap)
+                    && now - _lastSentAt < policy.Gap)
                 {
-                    wait = minimumGap - (now - _lastSentAt);
+                    wait = policy.Gap - (now - _lastSentAt);
                 }
                 else
                 {
@@ -198,6 +216,27 @@ public sealed class DiscordPresenceService : IAsyncDisposable
             await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    /// <summary>Huecos de la ventana de Discord y separación mínima para un tipo de envío.</summary>
+    internal readonly record struct SendPolicy(int Limit, TimeSpan Gap);
+
+    /// <summary>
+    /// Reparto del límite de Discord (5 actualizaciones / 20 s). El contenido usa los cinco
+    /// huecos con un suelo de medio segundo; el progreso y el fondo reservan dos huecos
+    /// para que un cambio de pista encuentre sitio al instante.
+    /// </summary>
+    internal static SendPolicy PolicyFor(PublishPriority priority, int minUpdateIntervalMs) => priority switch
+    {
+        PublishPriority.Content => new SendPolicy(
+            MaxSendsPerWindow,
+            TimeSpan.FromMilliseconds(500)),
+        PublishPriority.Progress => new SendPolicy(
+            Math.Max(1, MaxSendsPerWindow - 2),
+            TimeSpan.FromMilliseconds(1500)),
+        _ => new SendPolicy(
+            Math.Max(1, MaxSendsPerWindow - 2),
+            TimeSpan.FromMilliseconds(Math.Max(1000, minUpdateIntervalMs))),
+    };
 
     private void RecordSend()
     {

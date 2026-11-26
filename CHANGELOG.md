@@ -4,7 +4,39 @@ All notable changes are documented here. Versions follow [SemVer](https://semver
 The full release history (including binaries and SHA-256) lives on the
 [GitHub Releases page](https://github.com/itsmilespr/UniversalPresence/releases).
 
-## [Unreleased] (local, not published yet)
+## [1.8.6] - 2026-11-26
+
+### Fixed
+- A failed timeline read (player switching session, resume from sleep) no longer publishes
+  position 0:00. The last known position of the same track is kept and projected, so the
+  Discord bar stops flickering back to the start and no longer wastes an update.
+- Clearing the presence is retried when Discord rejects it instead of being reported as sent.
+- Connecting to Discord no longer republishes the activity that is already in flight.
+- Cover URLs, the upload queue and the listening history are written atomically: a forced
+  close can no longer leave a truncated cache that forced every cover to be uploaded again.
+- The metadata cache also invalidates when the position moves backwards more than 2 s, which
+  covers repeats of tracks with the same duration that never emit MediaPropertiesChanged.
+
+### Changed
+- Discord's rate limit is now prioritised by what changes. Content updates (track, artist,
+  cover, player) may use all five slots per 20 s; progress-only resyncs and the heartbeat
+  reserve two slots, so a track change never waits behind a bar resync.
+- The artwork URL is part of the content key: a cover that arrives or is renewed is published
+  as a visible change with content priority.
+- Periodic bar resync tolerance is 400 ms, as documented (it was 1 s in practice).
+- The transient metadata gap at a track change is covered for 1 s instead of 300 ms.
+- The metadata cache lives 15 s instead of 30 s, and the SMTC timeline is read once per
+  session and poll instead of twice.
+- Default poll interval is 1500 ms; SMTC events still wake the loop instantly.
+
+### Performance
+- The listening history no longer parses the whole file on every track change; it is trimmed
+  only when the entry count crosses the maximum plus a margin, or once a day.
+- The retry queue pauses while the current track's cover is being uploaded, so the visible
+  cover never waits behind pending ones.
+- Cover optimisation skips the PNG encode unless the source can carry transparency.
+
+## [1.8.5] - 2026-11-25
 
 ### Changed
 - Memory watchdog now runs every 5 s with an 80 MB threshold (was 30 s / 90 MB),

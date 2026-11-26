@@ -15,7 +15,7 @@
     <Product>Universal Presence</Product>
     <AssemblyTitle>Universal Presence</AssemblyTitle>
     <Description>Detects every Windows SMTC media session and publishes it to Discord Rich Presence without any player whitelist.</Description>
-    <Version>1.8.5</Version>
+    <Version>1.8.6</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
 

@@ -58,8 +58,11 @@ public sealed class AppOptions
     /// <summary>Momento (UTC) en que caduca <see cref="DiscordAccessToken"/>.</summary>
     public DateTimeOffset? DiscordTokenExpiresAt { get; set; }
 
-    /// <summary>How often the media sessions are re-read as a safety net, in milliseconds.</summary>
-    public int PollIntervalMs { get; set; } = 1000;
+    /// <summary>
+    /// How often the media sessions are re-read as a safety net, in milliseconds. Every
+    /// SMTC event wakes the loop immediately, so this only bounds the fallback reads.
+    /// </summary>
+    public int PollIntervalMs { get; set; } = 1500;
 
     /// <summary>
     /// Cada cuántos segundos se comprueba la barra publicada contra la posición real y se
